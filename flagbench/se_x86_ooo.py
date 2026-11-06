@@ -46,19 +46,6 @@ class L1DCache(Cache):
     response_latency = 2
     mshrs = 8
     tgts_per_mshr = 20
-    prefetcher = MultiPrefetcher(
-        prefetchers=[
-            StridePrefetcher(degree=8, latency=1, prefetch_on_access=True),
-            TaggedPrefetcher(),
-            IndirectMemoryPrefetcher(),
-            SignaturePathPrefetcher(),
-            AMPMPrefetcher(),
-            DCPTPrefetcher(),
-            IrregularStreamBufferPrefetcher(),
-            BOPPrefetcher(),
-            SmsPrefetcher(),
-        ]
-    )
 
 class L2Cache(Cache):
     size = '256kB'
