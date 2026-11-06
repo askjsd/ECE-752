@@ -1,0 +1,1 @@
+{"run": "input_large.dat > output_large.txt", "compile": ["-c qsort_large.c", "*.o -lm -o a.out"]}

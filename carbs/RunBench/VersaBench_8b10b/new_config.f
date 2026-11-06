@@ -1,0 +1,1 @@
+{"run": "input.txt output.32768.txt 32768", "files": ["src/testbench.c", "src/main.c", "src/calc.c"], "exe_file": "a.out", "lib": "-Isrc -DTIMING", "link_lib": "-lm", "check": ["output.32768.txt"]}

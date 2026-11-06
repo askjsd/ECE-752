@@ -1,0 +1,1 @@
+{"run": "1125000 > output_large.txt", "compile": [" -c bitcnt_2.c", " -c bitfiles.c", " -c bitstrng.c", " -c bitcnt_3.c", " -c bitcnts.c", " -c bitcnt_4.c", " -c bitarray.c", " -c bitcnt_1.c", " -c bstr_i.c", "*.o -lm -o a.out"]}

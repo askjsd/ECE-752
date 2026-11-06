@@ -1,0 +1,1 @@
+{"run": "> output_large.txt", "compile": ["-o basicmath_large.o -c basicmath_large.c", "-o rad2deg.o -c rad2deg.c", "-o cubic.o -c cubic.c", "-o isqrt.o -c isqrt.c", "*.o -lm -o a.out"]}

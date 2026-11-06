@@ -1,0 +1,1 @@
+{"run": " > tmp", "files": ["kernel5.cpp"], "exe_file": "a.out", "lib": "-DTIMING", "link_lib": "-lm", "check": ["tmp"]}

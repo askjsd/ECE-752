@@ -1,0 +1,1 @@
+{"run": "-d -k -f -c ./bzip2_data/1.bz2 > ftmp_out", "files": ["decompress.c", "compress.c", "bzlib.c", "huffman.c", "blocksort.c", "bzip2.c", "randtable.c", "crctable.c"], "exe_file": "a.out", "lib": " ", "link_lib": " ", "check": ["ftmp_out"]}

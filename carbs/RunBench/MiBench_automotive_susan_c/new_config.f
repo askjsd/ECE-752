@@ -1,0 +1,1 @@
+{"run": "input_large.pgm output_large.smoothing.pgm -c", "files": ["susan.c"], "exe_file": "a.out", "lib": " ", "link_lib": "-lm", "check": ["output_large.smoothing.pgm"]}

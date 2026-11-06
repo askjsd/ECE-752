@@ -1,0 +1,1 @@
+{"run": "input.dat > output_large.dat", "compile": ["-o dijkstra_large.o -c dijkstra_large.c", "dijkstra_large.o -o a.out"]}

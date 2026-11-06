@@ -1,0 +1,1 @@
+{"run": "data/test_image.pgm -b 25 ", "files": ["src/utilities.c", "src/parse_args.c", "src/fileio.c", "src/quantize.c", "src/run_length.c", "src/huffman.c", "src/convolve.c", "src/edges.c", "src/build_pyr.c", "src/epic.c"], "exe_file": "a.out", "lib": "-Isrc", "link_lib": "-lm", "check": ["data/test_image.pgm.E"]}

@@ -1,0 +1,1 @@
+{"run": "input.dat > output_large.dat", "files": ["dijkstra_large.c"], "exe_file": "a.out", "lib": "", "link_lib": "-lm", "check": ["output_large.dat"]}

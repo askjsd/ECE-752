@@ -1,0 +1,1 @@
+{"run": "-z -k -f -c ./automotive_qsort_data/1.dat > ftmp_out", "files": ["decompress.c", "compress.c", "bzlib.c", "huffman.c", "blocksort.c", "bzip2.c", "randtable.c", "crctable.c"], "exe_file": "a.out", "lib": " ", "link_lib": " ", "check": ["ftmp_out"]}

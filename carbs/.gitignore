@@ -1,0 +1,26 @@
+# Python env / caches / tuner results
+.venv/
+__pycache__/
+*.pkl
+*.opt-record.json.gz
+
+# RunBench: track source + build config only; inputs, outputs and build artifacts are ignored.
+# (Fetch the data from https://github.com/lv2020/RunBench, see fetch_runbench_data.sh)
+RunBench/**
+!RunBench/**/
+!RunBench/**/*.c
+!RunBench/**/*.cc
+!RunBench/**/*.cpp
+!RunBench/**/*.h
+!RunBench/**/*.hpp
+!RunBench/**/*.inc
+!RunBench/**/*.sh
+!RunBench/**/*.py
+!RunBench/**/Makefile*
+!RunBench/**/makefile*
+!RunBench/**/README*
+!RunBench/**/LICENSE*
+!RunBench/**/COPYING*
+!RunBench/**/COMPILE
+!RunBench/**/config.f
+!RunBench/**/new_config.f

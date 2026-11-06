@@ -1,0 +1,1 @@
+{"run": "1125000 > output_large.txt", "files": ["bitcnt_2.c", "bitfiles.c", "bitstrng.c", "bitcnt_3.c", "bitcnts.c", "bitcnt_4.c", "bitarray.c", "bitcnt_1.c", "bstr_i.c"], "exe_file": "a.out", "lib": " ", "link_lib": "-lm", "check": ["output_large.txt"]}

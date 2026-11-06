@@ -1,0 +1,1 @@
+{"run": "-f input_base/input_base_4CIF.ppm -F output_base_4CIF_96bps.jp2 -T jp2 -O rate=0.010416667", "files": ["jasper/src/appl/jasper.c"], "exe_file": "a.out", "lib": "-Ijasper/src/libjasper/include", "link_lib": "jasper/src/libjasper/.libs/libjasper.a -lm", "check": ["output_base_4CIF_96bps.jp2"]}

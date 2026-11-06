@@ -1,0 +1,1 @@
+{"run": "-d -k -f -c ../bzip2_data/1.bz2 > ftmp_out", "compile": ["-c decompress.c", "-c compress.c", "-c bzlib.c", "-c huffman.c", "-c blocksort.c", "-c bzip2.c", "-c randtable.c", "-c crctable.c", "*.o -o a.out"]}

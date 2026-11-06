@@ -1,0 +1,1 @@
+{"run": "> output_large.txt", "files": ["basicmath_large.c", "rad2deg.c", "cubic.c", "isqrt.c"], "exe_file": "a.out", "lib": "", "link_lib": "-lm", "check": ["output_large.txt"]}

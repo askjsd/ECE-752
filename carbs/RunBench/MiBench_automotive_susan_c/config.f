@@ -1,0 +1,1 @@
+{"run": "input_large.pgm output_large.smoothing.pgm -c", "compile": [" -c susan.c", "*.o -lm -o a.out"]}
