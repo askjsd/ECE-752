@@ -1,0 +1,7 @@
+work/
+work_sanity/
+results_sanity/
+luts_sanity/
+*.log
+__pycache__/
+work_mix/

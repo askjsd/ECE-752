@@ -1,0 +1,87 @@
+{
+ "kernel": "k_mix",
+ "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "flags": [
+  "unroll-loops",
+  "unroll-all-loops",
+  "tree-loop-vectorize",
+  "tree-slp-vectorize",
+  "ipa-cp-clone",
+  "unswitch-loops",
+  "predictive-commoning",
+  "tracer",
+  "schedule-insns",
+  "ivopts",
+  "loop-interchange",
+  "version-loops-for-strides"
+ ],
+ "o3_defaults": {
+  "unroll-loops": false,
+  "unroll-all-loops": false,
+  "tree-loop-vectorize": true,
+  "tree-slp-vectorize": true,
+  "ipa-cp-clone": true,
+  "unswitch-loops": true,
+  "predictive-commoning": true,
+  "tracer": false,
+  "schedule-insns": false,
+  "ivopts": true,
+  "loop-interchange": true,
+  "version-loops-for-strides": true
+ },
+ "base_flags": [
+  "-O3",
+  "-march=x86-64"
+ ],
+ "N": 12,
+ "o3_config_id": 3708,
+ "unique_binaries": 1120,
+ "o3_config_text_identical_to_plain_gcc_O3": true,
+ "reference_checksum": "13936726662663451926",
+ "compile_failures": 0,
+ "incorrect_binaries": 0,
+ "gem5": {
+  "binary": "/home/dwhan/projects/ece 752/build/X86/gem5.opt",
+  "binary_sha256": "5b3a0bfc04a8473d880f42d1bbd25053da56c924c8a188a0f95925cb85653fdc",
+  "binary_mtime": 1793919171.9911778,
+  "repo_head": "97755d31c5d77a5bcf3dcfbaa17a399c38eb7c16",
+  "commit_at_binary_build": "51edbbb9cfd37e92e9901aea2caa4a8f20eda005",
+  "src_dirty": false,
+  "banner": []
+ },
+ "gem5_config": "flagbench/sim_config.py (see docstring)",
+ "gem5_config_source": "\"\"\"Fixed gem5 configuration used for EVERY simulation in flagbench (SE mode, X86).\n\n  CPU    : 1x DerivO3CPU (gem5 stdlib CPUTypes.O3 default parameters), 2 GHz\n  L1I    : 32 KiB   L1D : 32 KiB   L2 : 256 KiB  (classic caches, PrivateL1PrivateL2CacheHierarchy;\n           associativities/latencies are the stdlib defaults, dumped into config.json by gem5)\n  Memory : SingleChannelDDR3_1600, 1 GiB\nROI: m5_work_begin() resets stats, m5_work_end() dumps stats (stdlib default exit handlers),\nso the FIRST stats block in stats.txt is the region of interest.\n\nusage: gem5.opt -d <outdir> sim_config.py <static_binary>\n\"\"\"\nimport sys\nfrom gem5.components.boards.simple_board import SimpleBoard\nfrom gem5.components.cachehierarchies.classic.private_l1_private_l2_cache_hierarchy import (\n    PrivateL1PrivateL2CacheHierarchy,\n)\nfrom gem5.components.memory import SingleChannelDDR3_1600\nfrom gem5.components.processors.cpu_types import CPUTypes\nfrom gem5.components.processors.simple_processor import SimpleProcessor\nfrom gem5.isas import ISA\nfrom gem5.resources.resource import BinaryResource\nfrom gem5.simulate.simulator import Simulator\nfrom gem5.utils.requires import requires\n\nrequires(isa_required=ISA.X86)\n\nbinary = sys.argv[1]\ncache = PrivateL1PrivateL2CacheHierarchy(l1d_size=\"32KiB\", l1i_size=\"32KiB\", l2_size=\"256KiB\")\nmemory = SingleChannelDDR3_1600(size=\"1GiB\")\nprocessor = SimpleProcessor(cpu_type=CPUTypes.O3, isa=ISA.X86, num_cores=1)\nboard = SimpleBoard(clk_freq=\"2GHz\", processor=processor, memory=memory, cache_hierarchy=cache)\nboard.set_se_binary_workload(BinaryResource(binary))\nsim = Simulator(board=board)\nsim.run()\n",
+ "kernel_source": "/* Composite kernel: 8 phases, each sensitive to specific GCC flags, in ONE region of interest.\n * Goal: a flag space with (almost) no don't-cares, where the optimum needs specific flags ON and\n * others OFF, and where some flags conflict across phases (so the best setting is a trade-off).\n * Flags that matter (see flagbench/README.md for measured effects):\n *   stencil    : tree-loop-vectorize, tree-slp-vectorize, predictive-commoning, ivopts, unroll-loops\n *   reduce     : unroll-loops, unroll-all-loops, tree-loop-vectorize, schedule-insns, ivopts\n *   helper     : tracer (good), unroll-all-loops (bad)\n *   crc        : schedule-insns (bad)\n *   unswitch   : unswitch-loops (bad when on), loop-interchange\n *   ipacp      : ipa-cp-clone (good), tree-loop-vectorize, unroll-loops\n *   interchange: loop-interchange, unroll-all-loops\n *   stride     : version-loops-for-strides\n */\n#include \"common.h\"\n#include <string.h>\n\n/* ---- phase data (initialised before the ROI) ---- */\n#define SW 64\n#define SH 64\nstatic float sa[SH][SW], sb[SH][SW];\n#define RN 40000\nstatic int32_t rarr[RN];\n#define HN 4096\nstatic uint32_t hdata[HN];\n#define CL 10000\nstatic uint8_t cbuf[CL];\n#define UN 2048\nstatic float ua[UN], ub[UN];\n#define PN 4096\nstatic int32_t pv[PN];\n#define IR 96\n#define IC 96\nstatic int32_t im[IR][IC], io[IR][IC];\n#define TN 4096\nstatic float ta[TN * 2], tb[TN * 2];\n\n/* ---- phases ---- */\n__attribute__((noinline)) static void ph_stencil(void) {\n    for (int it = 0; it < 45; it++) {\n        for (int i = 1; i < SH - 1; i++)\n            for (int j = 1; j < SW - 1; j++)\n                sb[i][j] = 0.25f * (sa[i-1][j] + sa[i+1][j] + sa[i][j-1] + sa[i][j+1]);\n        for (int i = 1; i < SH - 1; i++)\n            for (int j = 1; j < SW - 1; j++)\n                sa[i][j] = sb[i][j];\n    }\n}\nstatic int64_t g_total;\n__attribute__((noinline)) static void ph_reduce(void) {\n    int64_t total = 0;\n    for (int i = 0; i < RN; i++) total += rarr[i];\n    int32_t run = 0;\n    for (int i = 0; i < RN; i++) { run += rarr[i]; rarr[i] = run; }\n    for (int i = 0; i < RN; i++) total ^= rarr[i];\n    g_total = total;\n}\nstatic uint32_t mix(uint32_t v, uint32_t k) {\n    v ^= v >> 16; v *= 0x85ebca6bu; v ^= k; v ^= v >> 13; v *= 0xc2b2ae35u; return v ^ (v >> 16);\n}\nstatic uint32_t clampsum(uint32_t a, uint32_t b) { uint32_t s = a + b; return s < a ? 0xffffffffu : s; }\nstatic uint32_t g_acc;\n__attribute__((noinline)) static void ph_helper(void) {\n    uint32_t acc = 0;\n    for (int r = 0; r < 8; r++)\n        for (int i = 0; i < HN; i++) acc = clampsum(acc, mix(hdata[i], (uint32_t)r));\n    g_acc = acc;\n}\nstatic uint32_t g_crc;\n__attribute__((noinline)) static void ph_crc(void) {\n    uint32_t crc = 0xFFFFFFFFu;\n    for (int i = 0; i < CL; i++) {\n        crc ^= cbuf[i];\n        for (int b = 0; b < 8; b++) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));\n    }\n    g_crc = ~crc;\n}\nstatic int g_mode;\n__attribute__((noinline)) static void ph_unswitch(void) {\n    int mode = g_mode;\n    for (int r = 0; r < 60; r++)\n        for (int i = 0; i < UN; i++) {\n            if (mode) ua[i] = ua[i] * 0.5f + ub[i];\n            else      ua[i] = ua[i] - ub[i] * 0.25f;\n        }\n}\n__attribute__((noinline)) static int64_t work(int32_t *p, int n, int stride, int shift) {\n    int64_t s = 0;\n    for (int i = 0; i < n; i++) { int32_t t = p[i * stride]; t = (t << shift) + (t >> 2); p[i * stride] = t; s += t; }\n    return s;\n}\nstatic int64_t g_ipa;\n__attribute__((noinline)) static void ph_ipacp(void) {\n    int64_t acc = 0;\n    for (int r = 0; r < 30; r++) {\n        acc += work(pv, PN, 1, 1);\n        acc += work(pv, PN / 2, 2, 2);\n        acc ^= work(pv, PN / 4, 4, 1);\n    }\n    g_ipa = acc;\n}\n__attribute__((noinline)) static void ph_interchange(void) {\n    for (int r = 0; r < 24; r++)\n        for (int j = 0; j < IC; j++)\n            for (int i = 0; i < IR; i++)\n                io[i][j] = io[i][j] + im[i][j] * 3 + (im[i][j] >> 1);\n}\nstatic int g_stride;\n__attribute__((noinline)) static void axpy(float *x, const float *y, int n, int s) {\n    for (int i = 0; i < n; i++) x[i * s] += 0.5f * y[i * s];\n}\n__attribute__((noinline)) static void ph_stride(void) {\n    int s = g_stride;\n    for (int r = 0; r < 100; r++) axpy(ta, tb, TN, s);\n}\n\nstatic uint64_t fnv(uint64_t c, uint64_t v) { return (c ^ v) * 1099511628211ull; }\nint main(void) {\n    uint32_t seed = 0xC0FFEEu;\n    for (int i = 0; i < SH; i++) for (int j = 0; j < SW; j++) sa[i][j] = (float)(rng_next(&seed) & 1023u) * (1.0f / 64.0f);\n    memcpy(sb, sa, sizeof sa);\n    for (int i = 0; i < RN; i++) rarr[i] = (int32_t)(rng_next(&seed) & 0xffff) - 32768;\n    for (int i = 0; i < HN; i++) hdata[i] = rng_next(&seed);\n    for (int i = 0; i < CL; i++) cbuf[i] = (uint8_t)rng_next(&seed);\n    for (int i = 0; i < UN; i++) { ua[i] = (float)(rng_next(&seed) & 255); ub[i] = (float)(rng_next(&seed) & 255); }\n    for (int i = 0; i < PN; i++) pv[i] = (int32_t)(rng_next(&seed) & 0xffff);\n    for (int i = 0; i < IR; i++) for (int j = 0; j < IC; j++) im[i][j] = (int32_t)(rng_next(&seed) & 0xff);\n    for (int i = 0; i < TN * 2; i++) { ta[i] = (float)(rng_next(&seed) & 255); tb[i] = (float)(rng_next(&seed) & 255); }\n    volatile int vm = 1, vs = 1; g_mode = vm; g_stride = vs;\n\n    ROI_BEGIN();\n    ph_stencil(); ph_reduce(); ph_helper(); ph_crc(); ph_unswitch(); ph_ipacp(); ph_interchange(); ph_stride();\n    ROI_END();\n\n    uint64_t c = 1469598103934665603ull;\n    for (int i = 0; i < SH; i++) for (int j = 0; j < SW; j++) { union { float f; uint32_t u; } v = { sa[i][j] }; c = fnv(c, v.u); }\n    c = fnv(c, (uint64_t)g_total); c = fnv(c, g_acc); c = fnv(c, g_crc);\n    for (int i = 0; i < UN; i++) { union { float f; uint32_t u; } v = { ua[i] }; c = fnv(c, v.u); }\n    c = fnv(c, (uint64_t)g_ipa);\n    for (int i = 0; i < IR; i++) for (int j = 0; j < IC; j++) c = fnv(c, (uint32_t)io[i][j]);\n    for (int i = 0; i < TN * 2; i++) { union { float f; uint32_t u; } v = { ta[i] }; c = fnv(c, v.u); }\n    print_checksum(c);\n    return 0;\n}\n",
+ "determinism": [
+  {
+   "binary_hash": "b1cd4fde552c16e83838c0fbe7cbff9931fd974e2d303f0a2b093e2eac6d8b64",
+   "first": 3718251,
+   "rerun": 3718251,
+   "identical": true
+  },
+  {
+   "binary_hash": "c3b3dc99ffca718ae7f1c64521aa6286723df2048d1a76e67e32bac1315730c9",
+   "first": 5914739,
+   "rerun": 5914739,
+   "identical": true
+  },
+  {
+   "binary_hash": "10356ab94a4fd8ac3286b87e1833182fc1e9e7b6448c50535e9d19a5d311e052",
+   "first": 2859110,
+   "rerun": 2859110,
+   "identical": true
+  },
+  {
+   "binary_hash": "76bbf1b0feaa1c4734e8e3a1b06359eb38a0f368d48000777b863e4869842468",
+   "first": 5799354,
+   "rerun": 5799354,
+   "identical": true
+  },
+  {
+   "binary_hash": "f04c9c4a2d94ac6964ace49fd8cfbd52558f8a58e5bd610ce22b815bfc8230ce",
+   "first": 2640666,
+   "rerun": 2640666,
+   "identical": true
+  }
+ ]
+}
