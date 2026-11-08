@@ -18,10 +18,20 @@ FLAGS = ("unroll-loops", "peel-loops")
 
 
 def run(cmd, **kwargs):
+    """Run a command and fail immediately if it does not succeed."""
     return subprocess.run(cmd, check=True, text=True, **kwargs)
 
 
+def read_stat(stats, name):
+    """Read one numeric gem5 statistic from a stats.txt file."""
+    match = re.search(
+        r"^" + re.escape(name) + r"\s+([0-9.eE+-]+)", stats, re.MULTILINE
+    )
+    return float(match.group(1)) if match else None
+
+
 def main():
+    # Keep all generated binaries, logs, LUT data, and CARBS output together.
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True, help="Linux-native ECE-752 checkout")
     ap.add_argument("--out", required=True, help="Dedicated results directory")
@@ -49,6 +59,7 @@ def main():
     records = []
     reference_checksum = None
     for config_id in range(1 << len(FLAGS)):
+        # Compile one flag configuration and hash its text section for identity.
         work = tempfile.mkdtemp(prefix="compile-", dir=out)
         binary = os.path.join(bins, str(config_id))
         flags = [f"-f{name}" if config_id & (1 << bit) else f"-fno-{name}"
@@ -86,13 +97,11 @@ def main():
         checksum = checksum_match.group(1)
         if reference_checksum is None:
             reference_checksum = checksum
+        # Extract the measurements CARBS will use from gem5's statistics.
         stats = open(os.path.join(sim_dir, "stats.txt")).read()
-        def stat(name):
-            match = re.search(r"^" + re.escape(name) + r"\s+([0-9.eE+-]+)", stats, re.MULTILINE)
-            return float(match.group(1)) if match else None
-        cycles = stat("system.cpu.numCycles")
-        instructions = stat("system.cpu.commitStats0.numInsts")
-        ipc = stat("system.cpu.ipc")
+        cycles = read_stat(stats, "system.cpu.numCycles")
+        instructions = read_stat(stats, "system.cpu.commitStats0.numInsts")
+        ipc = read_stat(stats, "system.cpu.ipc")
         if cycles is None or instructions is None:
             raise SystemExit("Required RISCV stats missing; see " + os.path.join(sim_dir, "stats.txt"))
         records.append({
@@ -103,6 +112,7 @@ def main():
         })
         shutil.rmtree(work, ignore_errors=True)
 
+    # The LUT is the bridge between expensive gem5 runs and offline CARBS replay.
     lut_base = os.path.join(out, "riscv")
     with open(lut_base + ".csv", "w", newline="") as stream:
         writer = csv.writer(stream)
@@ -119,6 +129,7 @@ def main():
                    "reference_checksum": reference_checksum,
                    "isa": "RISCV", "kernel": args.kernel}, stream, indent=2)
 
+    # CARBS searches the measured LUT; it does not launch gem5 again here.
     lut = LUT(lut_base + ".csv")
     trace, probabilities = carbs(lut, budget=len(records), seed=0, return_state=True)
     with open(os.path.join(out, "carbs.json"), "w") as stream:
