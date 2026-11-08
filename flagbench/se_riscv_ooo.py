@@ -87,11 +87,11 @@ system.mem_ctrl.port = system.membus.mem_side_ports
 
 # 5. Explicit RISC-V Workload Assignment
 binary = sys.argv[1]
-system.workload = RiscvSEWorkload()
-
 process = Process()
+process.executable = binary
 process.cmd = [binary]
 
+system.workload = SEWorkload.init_compatible(binary)
 system.cpu.workload = process
 system.cpu.createThreads()
 

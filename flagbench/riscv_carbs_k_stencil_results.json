@@ -1,0 +1,24 @@
+{
+  "isa": "RISCV",
+  "kernel": "k_stencil",
+  "flags": [
+    "unroll-loops",
+    "peel-loops"
+  ],
+  "configs_simulated": 4,
+  "all_checksums_correct": true,
+  "o3_cycles": 3343247.0,
+  "best_cycles": 2950414.0,
+  "best_speedup_over_o3": 1.133136,
+  "carbs_trace_best_cycles": [
+    3343247.0,
+    2950414.0,
+    2950414.0,
+    2950414.0
+  ],
+  "carbs_final_probabilities": [
+    0.41303136830966775,
+    1.0
+  ],
+  "source_results": "results/riscv/carbs-run-20261107/"
+}
