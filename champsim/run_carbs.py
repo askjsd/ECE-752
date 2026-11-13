@@ -172,6 +172,12 @@ def main():
             )
         if result.returncode:
             raise SystemExit("Tracing failed; see " + trace_log)
+        trace_size = os.path.getsize(trace)
+        if trace_size == 0 or trace_size % 64:
+            raise SystemExit(
+                f"Tracing produced an invalid ChampSim trace ({trace_size} bytes); "
+                f"see {trace_log}. Rebuild the PIN tracer and retry."
+            )
 
         sim_dir = os.path.join(out, "simulations", str(config_id))
         os.makedirs(sim_dir, exist_ok=True)

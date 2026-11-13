@@ -78,6 +78,47 @@ within a few evaluations. That result cannot determine whether CARBS performs
 well on the real experiment. The default run uses 12 flags, or 4,096
 configurations per kernel, and should be used for tuner comparisons.
 
+### Full-run time and flag-space choices
+
+A full run is intentionally expensive. It evaluates up to 4,096 configurations
+per kernel, traces up to 2,000,000 instructions for each unique binary, runs
+ChampSim, and repeats determinism checks. With six kernels, that is up to
+24,576 configurations before binary deduplication. On a typical Windows
+machine, the full experiment can take many hours and may appear quiet while
+Clang/MinGW, PIN, or ChampSim is working. Progress is written below the
+requested output directory, especially in each kernel's `binaries\`, `traces\`,
+and `simulations\` folders.
+
+Use these tiers when developing or comparing changes:
+
+| Command | Configurations per kernel | Purpose |
+|---|---:|---|
+| `--nflags 2` | 4 | Fast smoke test only; not a tuner benchmark |
+| `--nflags 4` | 16 | End-to-end debugging and graph validation |
+| `--nflags 6` | 64 | Short development comparison |
+| `--nflags 8` | 256 | More representative intermediate experiment |
+| `--nflags 12` | 4,096 | Definitive gem5-equivalent flag-space run |
+
+The 12-flag run should be completed at least once for the final CARBS versus
+random-search versus hill-climbing comparison. Use fewer flags, fewer kernels,
+or shorter trace lengths for iteration, but do not describe those results as
+the full experiment. For example:
+
+```powershell
+# Development run: one kernel, eight flags, shorter trace
+python .\champsim\run_windows.py `
+  --kernels k_stencil `
+  --nflags 8 `
+  --trace-instructions 100000 `
+  --warmup-instructions 10000 `
+  --out .\champsim\results\development-8-flag
+
+# Definitive run: all six kernels and the complete 12-flag space
+python .\champsim\run_windows.py `
+  --nflags 12 `
+  --out .\champsim\results\full-12-flag
+```
+
 Add `--build` when the native simulator or PIN tracer needs rebuilding:
 
 ```powershell

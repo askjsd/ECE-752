@@ -21,6 +21,7 @@
 
 #include <atomic>
 #include <fstream>
+#include <mutex>
 #include <iostream>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,7 @@ static std::atomic<bool> foundStopSymbol(false);
 static std::atomic<bool> mainImageLoaded(false);
 
 std::ofstream outfile;
+std::mutex outfile_mutex;
 
 trace_instr_format_t curr_instr;
 
@@ -123,6 +125,7 @@ void WriteCurrentInstruction()
 {
   typename decltype(outfile)::char_type buf[sizeof(trace_instr_format_t)];
   std::memcpy(buf, &curr_instr, sizeof(trace_instr_format_t));
+  std::lock_guard<std::mutex> lock(outfile_mutex);
   outfile.write(buf, sizeof(trace_instr_format_t));
 }
 
