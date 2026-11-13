@@ -1,0 +1,29 @@
+{
+  "simulator": "ChampSim",
+  "isa": "X86",
+  "kernel": "k_stencil",
+  "flags": [
+    "unroll-loops",
+    "peel-loops"
+  ],
+  "configs_simulated": 4,
+  "all_checksums_correct": true,
+  "o3_cycles": 21706.0,
+  "best_cycles": 21706.0,
+  "best_speedup_over_o3": 1.0,
+  "carbs_trace_best_cycles": [
+    21706.0,
+    21706.0,
+    21706.0,
+    21706.0
+  ],
+  "carbs_final_probabilities": [
+    0.18858195890537177,
+    0.09842439878374643
+  ],
+  "graphs_generated": [
+    "score_k_stencil.png",
+    "score_aggregate.png"
+  ],
+  "workflow": "WSL MinGW GCC -> Intel PIN Windows tracer -> ChampSim x86 out-of-order -> LUT -> CARBS + evaluate.py"
+}

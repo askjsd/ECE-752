@@ -136,11 +136,35 @@ void BranchOrNot(UINT32 taken)
 }
 
 template <typename T>
-void WriteToSet(T* begin, T* end, UINT32 r)
+void WriteToSet(T* begin, T* end, ADDRINT r)
 {
+  if constexpr (sizeof(T) == sizeof(ADDRINT)) {
+    constexpr ADDRINT low = 0x1a000000ULL;
+    constexpr ADDRINT high = 0x1b000000ULL;
+    if (r >= low && r < high) r += high - low;
+  }
+  auto value = static_cast<T>(r);
   auto set_end = std::find(begin, end, 0);
   auto found_reg = std::find(begin, set_end, r); // check to see if this register is already in the list
   *found_reg = r;
+}
+
+static ADDRINT CanonicalizeMemoryAddress(ADDRINT address)
+{
+  // ChampSim's Windows port has a legacy address path that faults for this
+  // allocator range. Preserve offsets and avoid only the affected 16 MiB span.
+  constexpr ADDRINT low = 0x1a000000ULL;
+  constexpr ADDRINT high = 0x1b000000ULL;
+  return address >= low && address < high ? address + (high - low) : address;
+}
+
+template <>
+void WriteToSet<unsigned long long int>(unsigned long long int* begin, unsigned long long int* end, UINT32 r)
+{
+  auto address = CanonicalizeMemoryAddress(static_cast<ADDRINT>(r));
+  auto set_end = std::find(begin, end, 0);
+  auto found_address = std::find(begin, set_end, address);
+  *found_address = address;
 }
 
 VOID StartTracing(VOID* ip)

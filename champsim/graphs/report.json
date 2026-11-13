@@ -1,0 +1,230 @@
+{
+ "params": {
+  "eta": 0.9,
+  "h": 5,
+  "gamma": 0.9,
+  "eps": 0.005,
+  "k": null,
+  "seeds": 10,
+  "budgets": [
+   2,
+   4
+  ],
+  "effect_thr": 0.01,
+  "min_headroom": 0.0,
+  "min_denom_frac": 0.0
+ },
+ "kernels": {
+  "k_stencil": {
+   "ground_truth": {
+    "n_configs": 4,
+    "valid_configs": 4,
+    "unique_binaries": 4,
+    "o3_cycles": 21706.0,
+    "optimum_cycles": 21706.0,
+    "optimum_speedup": 1.0,
+    "control_no_headroom": false,
+    "worst_cycles": 21744.0,
+    "median_cycles": 21741.0,
+    "optimum_config_ids": [
+     0
+    ],
+    "o3_percentile_rank": 0.0,
+    "expected_random_speedup": {
+     "2": 0.9992180397280589,
+     "4": 1.0
+    }
+   },
+   "tuners": {
+    "carbs": {
+     "score_median": {
+      "2": 1.0,
+      "4": NaN
+     },
+     "score_ci95": {
+      "2": [
+       1.0,
+       1.0
+      ],
+      "4": [
+       NaN,
+       NaN
+      ]
+     },
+     "headroom_median": {
+      "2": NaN,
+      "4": NaN
+     },
+     "speedup_median": {
+      "2": 1.0,
+      "4": 1.0
+     },
+     "evals_to_0.9": {
+      "fraction_reached_within_4": 1.0,
+      "median_among_reached": 1.0
+     }
+    },
+    "random": {
+     "score_median": {
+      "2": 1.0,
+      "4": NaN
+     },
+     "score_ci95": {
+      "2": [
+       -0.8825464678995968,
+       1.0
+      ],
+      "4": [
+       NaN,
+       NaN
+      ]
+     },
+     "headroom_median": {
+      "2": -Infinity,
+      "4": NaN
+     },
+     "speedup_median": {
+      "2": 1.0,
+      "4": 1.0
+     },
+     "evals_to_0.9": {
+      "fraction_reached_within_4": 0.8,
+      "median_among_reached": 2.0
+     }
+    },
+    "hillclimb": {
+     "score_median": {
+      "2": 0.058726766050201606,
+      "4": NaN
+     },
+     "score_ci95": {
+      "2": [
+       -1.23490706420393,
+       1.0
+      ],
+      "4": [
+       NaN,
+       NaN
+      ]
+     },
+     "headroom_median": {
+      "2": -Infinity,
+      "4": -Infinity
+     },
+     "speedup_median": {
+      "2": 0.9992639617260097,
+      "4": 1.0
+     },
+     "evals_to_0.9": {
+      "fraction_reached_within_4": 0.8,
+      "median_among_reached": 2.0
+     }
+    }
+   },
+   "flag_effects": {
+    "unroll-loops": {
+     "main_effect_pct": 0.07368519006638545,
+     "class": "neutral",
+     "o3_default_on": false
+    },
+    "peel-loops": {
+     "main_effect_pct": 0.10130696351101005,
+     "class": "neutral",
+     "o3_default_on": false
+    }
+   },
+   "critical_flags": 0,
+   "top_pairwise_interactions_pct": [
+    [
+     "unroll-loops*peel-loops",
+     -0.1472076547981589
+    ]
+   ],
+   "interaction_critical_pairs": 0,
+   "carbs_P_vs_ground_truth": {
+    "unroll-loops": {
+     "class": "neutral",
+     "carbs_final_P_mean@4": 0.29451565465769836,
+     "agrees": null
+    },
+    "peel-loops": {
+     "class": "neutral",
+     "carbs_final_P_mean@4": 0.3297304247673455,
+     "agrees": null
+    }
+   },
+   "carbs_agreement": {
+    "non_neutral_flags": 0,
+    "agree": 0
+   }
+  }
+ },
+ "aggregate": {
+  "kernels_used": [
+   "k_stencil"
+  ],
+  "kernels_skipped_no_headroom": [],
+  "tuners": {
+   "carbs": {
+    "mean_over_kernels_of_median_score": {
+     "2": 1.0,
+     "4": NaN
+    },
+    "ci95_over_seeds": {
+     "2": [
+      1.0,
+      1.0
+     ],
+     "4": [
+      NaN,
+      NaN
+     ]
+    }
+   },
+   "random": {
+    "mean_over_kernels_of_median_score": {
+     "2": 1.0,
+     "4": NaN
+    },
+    "ci95_over_seeds": {
+     "2": [
+      -0.8825464678995968,
+      1.0
+     ],
+     "4": [
+      NaN,
+      NaN
+     ]
+    }
+   },
+   "hillclimb": {
+    "mean_over_kernels_of_median_score": {
+     "2": 0.058726766050201606,
+     "4": NaN
+    },
+    "ci95_over_seeds": {
+     "2": [
+      -1.23490706420393,
+      1.0
+     ],
+     "4": [
+      NaN,
+      NaN
+     ]
+    }
+   }
+  },
+  "wilcoxon_carbs_vs_random_auc": {
+   "n_kernels": 1,
+   "auc_carbs": [
+    1.0
+   ],
+   "auc_random": [
+    1.0
+   ],
+   "mean_auc_diff_carbs_minus_random": 0.0,
+   "bootstrap_ci95_of_mean_diff_over_kernels": null,
+   "note": "With only 1 kernels the Wilcoxon test has very low power (smallest attainable two-sided p = 1.0000); effect sizes and CIs are the primary result."
+  }
+ }
+}
