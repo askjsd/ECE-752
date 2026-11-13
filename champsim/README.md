@@ -39,10 +39,26 @@ From the repository root, run:
 python .\champsim\run_windows.py
 ```
 
-The defaults use `k_stencil`, 2,000,000 traced instructions, 100,000 warmup
-instructions, 100 evaluation seeds, and the same budgets as gem5:
-`10 20 50 100 200`. Results are written to
-`champsim\results\k_stencil-windows`.
+The defaults use all six gem5 kernels (`k_stencil`, `k_ptrchase`, `k_branchy`,
+`k_reduce`, `k_crc32`, and `k_helper`), 2,000,000 traced instructions,
+100,000 warmup instructions, 100 evaluation seeds, and the same budgets as
+gem5: `10 20 50 100 200`. Each kernel gets an isolated directory under
+`champsim\results\windows`; root-level LUT aliases are created for the shared
+graph evaluator.
+
+The default compiler backend is `wsl-mingw`. It uses Windows-targeting MinGW
+GCC from WSL to produce PE executables, preserving the complete gem5/GCC flag
+space while Windows Intel PIN can still trace the result:
+
+```powershell
+wsl.exe sudo apt-get update
+wsl.exe sudo apt-get install -y mingw-w64
+```
+
+This does not use a WSL Linux executable or a WSL trace. The executable is
+written into the Windows results directory and traced by native Windows PIN
+and ChampSim. Group members can reproduce the compiler setup without a
+machine-specific Windows compiler installation.
 
 For a quick end-to-end smoke test:
 
@@ -71,12 +87,15 @@ Each run contains:
 
 ```text
 <output>\
-  binaries\       compiled Windows x86 binaries
-  traces\         Intel PIN ChampSim traces
-  simulations\    ChampSim logs
-  champsim.csv    measured LUT
-  champsim.json   LUT metadata
-  carbs.json      CARBS replay result
+  <kernel>\
+    binaries\     compiled Windows x86 binaries
+    traces\       Intel PIN ChampSim traces
+    simulations\  ChampSim logs
+    <kernel>.csv  measured LUT
+    <kernel>.json LUT metadata
+    carbs.json    CARBS replay result
+  <kernel>.csv    root-level evaluator alias
+  <kernel>.json   root-level evaluator alias
   graphs\
     score_<kernel>.png
     score_aggregate.png
@@ -104,7 +123,16 @@ python .\champsim\run_windows.py `
 ```
 
 The older `run_windows.ps1` wrapper remains available, but the Python command
-above is the supported interface.
+above is the supported interface. Use `--kernels k_stencil k_reduce` to run a
+subset, and `--flags unroll-loops peel-loops` to choose a smaller space.
+The default space is the 12-flag gem5 space and every configuration passes
+both `-f<name>` and `-fno-<name>` to GCC. Use `--compiler clang` only as an
+explicit fallback; it is not equivalent for GCC-only optimization flags.
+The 12-flag default contains 4,096 configurations per kernel, so use a
+smaller explicit `--flags` list for smoke tests.
+Use `--strict-o3` when the selected flag space must contain an exact hash match
+for plain `-O3`; otherwise the workflow records that the O3 identity is
+unverified and uses configuration zero as the comparison baseline.
 
 The graph lines are the median normalized score over seeds; shaded regions are
 95% bootstrap confidence intervals. The report also includes speedup,
