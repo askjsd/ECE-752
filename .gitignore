@@ -1,5 +1,14 @@
 MODULE.bazel.lock
 bazel-*
+champsim/.upstream
+champsim/results
+champsim/traces
+champsim/.upstream-windows/.csconfig
+champsim/.upstream-windows/absolute.options
+champsim/.upstream-windows/bin
+champsim/.upstream-windows/vcpkg
+champsim/.upstream-windows/vcpkg_installed
+champsim/.upstream-windows/tracer/pin/obj-intel64
 build
 .github/copilot-instructions.md
 gem5_build
