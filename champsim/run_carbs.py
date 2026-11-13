@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-from portable_flags import DEFAULT_FLAGS, config_flags as make_config_flags, validate
+from portable_flags import DEFAULT_FLAGS, config_flags as make_config_flags, select
 
 
 def command(args, **kwargs):
@@ -59,8 +59,10 @@ def main():
     parser.add_argument("--tracer", required=True, help="Windows .dll or Linux .so ChampSim tracer")
     parser.add_argument("--out", required=True, help="Dedicated results directory")
     parser.add_argument("--kernel", default="k_stencil")
-    parser.add_argument("--flags", nargs="+", default=list(DEFAULT_FLAGS),
-                        help="Compiler optimization flags to toggle")
+    parser.add_argument("--nflags", type=int, default=None,
+                        help="number of leading gem5 flags to use (default: 12)")
+    parser.add_argument("--flags", nargs="+", default=None,
+                        help="explicit compiler optimization flags; overrides the default")
     parser.add_argument("--compiler", choices=("wsl-mingw", "clang"), default="wsl-mingw",
                         help="Compiler backend; wsl-mingw preserves the GCC flag space")
     parser.add_argument("--trace-instructions", type=int, default=2_000_000)
@@ -71,7 +73,7 @@ def main():
                         help="fail if plain Clang -O3 has no exact explicit configuration match")
     args = parser.parse_args()
     try:
-        flags = validate(args.flags)
+        flags = select(args.nflags, args.flags)
     except ValueError as error:
         raise SystemExit(str(error))
 

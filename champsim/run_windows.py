@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 
-from portable_flags import DEFAULT_FLAGS
+from portable_flags import DEFAULT_FLAGS, select
 
 ROOT = Path(__file__).resolve().parents[1]
 CHAMPSIM = Path(__file__).resolve().parent
@@ -83,8 +83,10 @@ def main():
         default=["k_stencil", "k_ptrchase", "k_branchy", "k_reduce", "k_crc32", "k_helper"],
         help="kernel source names without .c",
     )
-    parser.add_argument("--flags", nargs="+", default=list(DEFAULT_FLAGS),
-                        help="compiler optimization flags to toggle")
+    parser.add_argument("--nflags", type=int, default=None,
+                        help="number of leading gem5 flags to use (default: 12)")
+    parser.add_argument("--flags", nargs="+", default=None,
+                        help="explicit compiler optimization flags; overrides the default")
     parser.add_argument("--compiler", choices=("wsl-mingw", "clang"), default="wsl-mingw",
                         help="wsl-mingw is the portable GCC-equivalent backend")
     parser.add_argument("--pin", help="Intel PIN directory containing pin.exe")
@@ -99,6 +101,10 @@ def main():
     parser.add_argument("--skip-tests", action="store_true", help="skip the shared tuner unit tests")
     parser.add_argument("--no-graphs", action="store_true", help="stop after the native LUT/CARBS stage")
     args = parser.parse_args()
+    try:
+        flags = select(args.nflags, args.flags)
+    except ValueError as error:
+        fail(str(error))
 
     if os.name != "nt":
         fail("run_windows.py is for native Windows. Use the Linux/WSL workflow on non-Windows hosts.")
@@ -138,7 +144,7 @@ def main():
                 "--tracer", str(TRACER),
                 "--out", str(kernel_output),
                 "--kernel", kernel,
-                "--flags", *args.flags,
+                "--flags", *flags,
                 "--compiler", args.compiler,
                 "--trace-instructions", str(args.trace_instructions),
                 "--warmup-instructions", str(args.warmup_instructions),

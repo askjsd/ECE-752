@@ -71,6 +71,13 @@ python .\champsim\run_windows.py `
   --out .\champsim\results\windows-smoke
 ```
 
+The smoke command is intentionally small and is not a performance benchmark.
+The earlier CARBS graph used only two flags, which produced four configurations
+and made random search appear better simply because it could exhaust the space
+within a few evaluations. That result cannot determine whether CARBS performs
+well on the real experiment. The default run uses 12 flags, or 4,096
+configurations per kernel, and should be used for tuner comparisons.
+
 Add `--build` when the native simulator or PIN tracer needs rebuilding:
 
 ```powershell
@@ -125,6 +132,9 @@ python .\champsim\run_windows.py `
 The older `run_windows.ps1` wrapper remains available, but the Python command
 above is the supported interface. Use `--kernels k_stencil k_reduce` to run a
 subset, and `--flags unroll-loops peel-loops` to choose a smaller space.
+The same selection can be written as `--nflags 12`; `--nflags 12` is the
+default and means all 12 flags below. Do not pass `--nflags` and `--flags`
+together.
 The default space is the 12-flag gem5 space and every configuration passes
 both `-f<name>` and `-fno-<name>` to GCC. Use `--compiler clang` only as an
 explicit fallback; it is not equivalent for GCC-only optimization flags.

@@ -6,7 +6,8 @@ param(
     [int]$TraceInstructions = 2000000,
     [int]$WarmupInstructions = 100000,
     [int]$EvaluationSeeds = 100,
-    [string]$EvaluationBudgets = "1,2,3,4",
+    [string]$EvaluationBudgets = "10,20,50,100,200",
+    [int]$NFlags = 12,
     [switch]$NoGraphs,
     [switch]$Build
 )
@@ -102,6 +103,7 @@ if ([string]::IsNullOrWhiteSpace($Output)) {
     --tracer $tracer `
     --out $Output `
     --kernel $Kernel `
+    --nflags $NFlags `
     --trace-instructions $TraceInstructions `
     --warmup-instructions $WarmupInstructions
 
