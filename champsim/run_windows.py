@@ -80,7 +80,7 @@ def main():
     parser.add_argument(
         "--kernels",
         nargs="+",
-        default=["k_stencil", "k_ptrchase", "k_branchy", "k_reduce", "k_crc32", "k_helper"],
+        default=["k_stencil", "k_ptrchase", "k_branchy", "k_reduce", "k_crc32", "k_helper", "k_mix2"],
         help="kernel source names without .c",
     )
     parser.add_argument("--nflags", type=int, default=None,

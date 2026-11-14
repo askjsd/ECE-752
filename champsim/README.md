@@ -40,11 +40,31 @@ python .\champsim\run_windows.py
 ```
 
 The defaults use all six gem5 kernels (`k_stencil`, `k_ptrchase`, `k_branchy`,
-`k_reduce`, `k_crc32`, and `k_helper`), 2,000,000 traced instructions,
-100,000 warmup instructions, 100 evaluation seeds, and the same budgets as
-gem5: `10 20 50 100 200`. Each kernel gets an isolated directory under
-`champsim\results\windows`; root-level LUT aliases are created for the shared
-graph evaluator.
+`k_reduce`, `k_crc32`, and `k_helper`) plus the new `k_mix2` flag-stress kernel,
+2,000,000 traced instructions, 100,000 warmup instructions, 100 evaluation seeds,
+and the same budgets as gem5: `10 20 50 100 200`. Each kernel gets an isolated
+directory under `champsim\results\windows`; root-level LUT aliases are created
+for the shared graph evaluator.
+
+### Kernels
+
+| Kernel | Description | Expected flag sensitivity |
+|---|---|---|
+| `k_stencil` | 5-point Jacobi stencil | Moderate: vectorize + unroll |
+| `k_ptrchase` | Pointer chase > L2 (control) | Very low: memory-latency bound |
+| `k_branchy` | Bytecode interpreter | Low: data-dependent branches |
+| `k_reduce` | Reduction + prefix sum | Moderate: unroll + vectorize |
+| `k_crc32` | Bitwise CRC32 | Low-moderate: unroll + schedule |
+| `k_helper` | Hot helper calls | Moderate: inline + IPA |
+| `k_mix2` | 10-phase flag-stress kernel | **High**: stencil, reduce, CRC, helper, interchange, stride, FP matmul, IPA stress — opposing flag preferences produce the widest cycle range |
+
+`k_mix2` is the recommended kernel for tuner discrimination: its FP matrix-multiply
+phase benefits strongly from vectorization (4-8x with the right flags) while its CRC
+phase prefers scalar code, and loop-interchange helps its column-major matrix phase
+but can hurt the strided AXPY. No flag combination dominates every phase, so the
+optimum is a real trade-off — exactly the kind of space CARBS is designed to search.
+Correctness is guaranteed by a fixed-seed FNV-1a checksum verified against the
+-O0 native reference for every configuration.
 
 The default compiler backend is `wsl-mingw`. It uses Windows-targeting MinGW
 GCC from WSL to produce PE executables, preserving the complete gem5/GCC flag
@@ -82,12 +102,27 @@ configurations per kernel, and should be used for tuner comparisons.
 
 A full run is intentionally expensive. It evaluates up to 4,096 configurations
 per kernel, traces up to 2,000,000 instructions for each unique binary, runs
-ChampSim, and repeats determinism checks. With six kernels, that is up to
-24,576 configurations before binary deduplication. On a typical Windows
-machine, the full experiment can take many hours and may appear quiet while
-Clang/MinGW, PIN, or ChampSim is working. Progress is written below the
-requested output directory, especially in each kernel's `binaries\`, `traces\`,
-and `simulations\` folders.
+ChampSim, and repeats determinism checks. With seven kernels (six gem5 +
+`k_mix2`), that is up to 28,672 configurations before binary deduplication.
+On a typical Windows machine, the full experiment can take many hours and may
+appear quiet while Clang/MinGW, PIN, or ChampSim is working.
+
+**What makes a full 12-flag run finish faster without sacrificing correctness:**
+
+* **Binary deduplication (automatic):** `run_carbs.py` hashes each compiled
+  binary's `.text` section and only traces/simulates *unique* binaries. On
+  `k_mix2` roughly 25-35% of 4,096 configs are unique — the rest share a
+  `.text` hash and are skipped for tracing/simulation.
+* **Parallel compilation (`--jobs`):** defaults to 8 workers. Increase on
+  machines with more cores: `--jobs 16` or `--jobs 32`.
+* **Resume support (automatic):** already-compiled binaries, existing traces,
+  and existing simulation logs are skipped. Interrupt and re-run at any time;
+  nothing is re-done.
+* **Fewer kernels for development:** `k_mix2` alone with `--nflags 12` is a
+  complete tuner experiment in one kernel — run the other kernels only for the
+  final aggregate comparison.
+* **Shorter traces for iteration:** `--trace-instructions 100000` for smoke
+  tests, 2,000,000 for the definitive run.
 
 Use these tiers when developing or comparing changes:
 
@@ -113,7 +148,13 @@ python .\champsim\run_windows.py `
   --warmup-instructions 10000 `
   --out .\champsim\results\development-8-flag
 
-# Definitive run: all six kernels and the complete 12-flag space
+# k_mix2-only definitive run: 12 flags, fastest path to tuner results
+python .\champsim\run_windows.py `
+  --kernels k_mix2 `
+  --nflags 12 `
+  --out .\champsim\results\full-12-flag-mix2
+
+# Definitive run: all seven kernels and the complete 12-flag space
 python .\champsim\run_windows.py `
   --nflags 12 `
   --out .\champsim\results\full-12-flag
@@ -139,6 +180,8 @@ Each run contains:
     binaries\     compiled Windows x86 binaries
     traces\       Intel PIN ChampSim traces
     simulations\  ChampSim logs
+    compile-logs\ compiler stderr/stdout (reference, plain -O3, per-config)
+    trace-logs\   Intel PIN trace stderr/stdout (per config)
     <kernel>.csv  measured LUT
     <kernel>.json LUT metadata
     carbs.json    CARBS replay result
