@@ -92,12 +92,18 @@ def main():
     parser.add_argument("--pin", help="Intel PIN directory containing pin.exe")
     parser.add_argument("--out", help="output directory; defaults to champsim/results/windows")
     parser.add_argument("--trace-instructions", type=int, default=2_000_000)
+    parser.add_argument("--trace-skip-instructions", type=int, default=1_000,
+                        help="PIN instructions to skip before the Windows trace window")
     parser.add_argument("--warmup-instructions", type=int, default=100_000)
+    parser.add_argument("--jobs", "-j", type=int, default=8, help="parallel compilation jobs (default: 8)")
+    parser.add_argument("--determinism", type=int, default=0, help="number of determinism checks (default: 0)")
     parser.add_argument("--seeds", type=int, default=100, help="evaluation seeds for comparison plots")
     parser.add_argument("--budgets", type=int, nargs="+", default=DEFAULT_BUDGETS)
     parser.add_argument("--strict-o3", action="store_true",
                         help="fail unless plain Clang -O3 matches an explicit configuration")
     parser.add_argument("--build", action="store_true", help="rebuild ChampSim and the PIN tracer")
+    parser.add_argument("--force-trace", action="store_true",
+                        help="regenerate every trace and simulation instead of reusing cached results")
     parser.add_argument("--skip-tests", action="store_true", help="skip the shared tuner unit tests")
     parser.add_argument("--no-graphs", action="store_true", help="stop after the native LUT/CARBS stage")
     args = parser.parse_args()
@@ -126,7 +132,8 @@ def main():
         fail(f"Windows PIN tracer was not found: {TRACER}. Re-run with --build.")
 
     runtime = UPSTREAM / "vcpkg_installed" / "x64-windows" / "bin"
-    os.environ["PATH"] = str(llvm) + os.pathsep + str(runtime) + os.pathsep + os.environ.get("PATH", "")
+    bin_dir = UPSTREAM / "bin"
+    os.environ["PATH"] = str(llvm) + os.pathsep + str(bin_dir) + os.pathsep + str(runtime) + os.pathsep + os.environ.get("PATH", "")
     output = Path(args.out) if args.out else CHAMPSIM / "results" / "windows"
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -146,10 +153,13 @@ def main():
                 "--kernel", kernel,
                 "--flags", *flags,
                 "--compiler", args.compiler,
+                "--jobs", str(args.jobs),
                 "--trace-instructions", str(args.trace_instructions),
+                "--trace-skip-instructions", str(args.trace_skip_instructions),
                 "--warmup-instructions", str(args.warmup_instructions),
-                "--determinism", "5",
+                "--determinism", str(args.determinism),
                 *(("--strict-o3",) if args.strict_o3 else ()),
+                *(("--force-trace",) if args.force_trace else ()),
             ],
         )
         shutil.copyfile(kernel_output / f"{kernel}.csv", output / f"{kernel}.csv")

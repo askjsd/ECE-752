@@ -1,0 +1,4 @@
+[2026-11-14 06:19:29.007436100 UTC] [12884:28060] [PIND]: Pin command line: C:\Users\yogev\Downloads\pin-external-4.4-99977-g54fbb8814-clang-windows\pin-external-4.4-99977-g54fbb8814-clang-windows\pin.exe -t C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\tracer\pin\obj-intel64\champsim_tracer_new.dll -o C:\Users\yogev\Documents\ECE-752\champsim\results\k_reduce-12flag\k_reduce\simulations\3676\newtrace.champsim -t 100000 -- C:\Users\yogev\Documents\ECE-752\champsim\results\k_reduce-12flag\k_reduce\binaries\3676.exe 
+Pin: pin-4.4-99977-54fbb8814
+Copyright 2002-2026 Intel Corporation.
+E:  [tid:20644] Invalid tool DLL name :  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\tracer\pin\obj-intel64\champsim_tracer_new.dll

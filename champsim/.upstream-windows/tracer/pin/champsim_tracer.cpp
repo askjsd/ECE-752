@@ -136,7 +136,7 @@ void BranchOrNot(UINT32 taken)
 }
 
 template <typename T>
-void WriteToSet(T* begin, T* end, ADDRINT r)
+void WriteToSet(T* begin, T* end, UINT32 r)
 {
   if constexpr (sizeof(T) == sizeof(ADDRINT)) {
     constexpr ADDRINT low = 0x1a000000ULL;
@@ -146,25 +146,28 @@ void WriteToSet(T* begin, T* end, ADDRINT r)
   auto value = static_cast<T>(r);
   auto set_end = std::find(begin, end, 0);
   auto found_reg = std::find(begin, set_end, r); // check to see if this register is already in the list
-  *found_reg = r;
+  if (found_reg != end) *found_reg = r;
 }
 
 static ADDRINT CanonicalizeMemoryAddress(ADDRINT address)
 {
-  // ChampSim's Windows port has a legacy address path that faults for this
-  // allocator range. Preserve offsets and avoid only the affected 16 MiB span.
-  constexpr ADDRINT low = 0x1a000000ULL;
-  constexpr ADDRINT high = 0x1b000000ULL;
-  return address >= low && address < high ? address + (high - low) : address;
+  // This Windows ChampSim build expects low-32-bit process addresses. Move
+  // the allocator spans that trigger its legacy address-path fault.
+  constexpr ADDRINT destination = 0x40000000ULL;
+  if (address >= 0x0a000000ULL && address < 0x0b000000ULL)
+    return destination + (address - 0x0a000000ULL);
+  if (address >= 0x1a000000ULL && address < 0x1b000000ULL)
+    return destination + (address - 0x1a000000ULL);
+  return address;
 }
 
 template <>
 void WriteToSet<unsigned long long int>(unsigned long long int* begin, unsigned long long int* end, UINT32 r)
 {
-  auto address = CanonicalizeMemoryAddress(static_cast<ADDRINT>(r));
+  auto address = CanonicalizeMemoryAddress(r);
   auto set_end = std::find(begin, end, 0);
   auto found_address = std::find(begin, set_end, address);
-  *found_address = address;
+  if (found_address != end) *found_address = address;
 }
 
 VOID StartTracing(VOID* ip)

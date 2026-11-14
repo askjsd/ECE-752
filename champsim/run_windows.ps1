@@ -104,6 +104,7 @@ if ([string]::IsNullOrWhiteSpace($Output)) {
     --out $Output `
     --kernel $Kernel `
     --nflags $NFlags `
+    --jobs 8 `
     --trace-instructions $TraceInstructions `
     --warmup-instructions $WarmupInstructions
 
