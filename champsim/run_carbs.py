@@ -150,6 +150,8 @@ def main():
     os.makedirs(os.path.join(out, "binaries"), exist_ok=True)
     os.makedirs(os.path.join(out, "traces"), exist_ok=True)
     os.makedirs(os.path.join(out, "simulations"), exist_ok=True)
+    os.makedirs(os.path.join(out, "compile-logs"), exist_ok=True)
+    os.makedirs(os.path.join(out, "trace-logs"), exist_ok=True)
     hash_dir = tempfile.mkdtemp(prefix="champsim_hash_")
 
     llvm_candidates = [r"C:\Program Files\LLVM\bin", r"C:\Program Files (x86)\LLVM\bin"]
@@ -191,7 +193,7 @@ def main():
 
     reference_source = os.path.join(repo, "flagbench", "kernels", args.kernel + ".c")
     reference_binary = os.path.join(out, "reference.exe" if os.name == "nt" else "reference")
-    reference_log = os.path.join(out, "reference.log")
+    reference_log = os.path.join(out, "compile-logs", "reference.log")
     with open(reference_log, "w") as log:
         result = compiler_run(
             [compiler, "-O0", "-DNO_M5OPS", "-I", os.path.join(repo, "include"),
@@ -202,7 +204,7 @@ def main():
         raise SystemExit("Reference compilation failed; see " + reference_log)
     reference_checksum = checksum(reference_binary)
     o3_binary = os.path.join(out, "plain-o3.exe" if os.name == "nt" else "plain-o3")
-    o3_log = os.path.join(out, "plain-o3.log")
+    o3_log = os.path.join(out, "compile-logs", "plain-o3.log")
     result = compile_binary(o3_binary, "-O3", [], o3_log)
     if result.returncode:
         raise SystemExit("Plain -O3 compilation failed; see " + o3_log)
@@ -217,7 +219,7 @@ def main():
         if os.path.isfile(bpath) and os.path.getsize(bpath) > 0:
             return cid
         cswitches = make_config_flags(cid, flags)
-        clog = os.path.join(out, f"compile-{cid}.log")
+        clog = os.path.join(out, "compile-logs", f"compile-{cid}.log")
         res = compile_binary(bpath, "-O3", cswitches, clog)
         if res.returncode:
             raise SystemExit(f"Compilation failed for config {cid}; see {clog}")
@@ -272,7 +274,7 @@ def main():
             if has_valid_stats and trace_is_current and not args.force_trace:
                 return b_hash, cyc, ins, ipc_val
 
-        trace_log = os.path.join(out, f"trace-{cid}.log")
+        trace_log = os.path.join(out, "trace-logs", f"trace-{cid}.log")
 
         existing_trace_is_current = (
             os.path.isfile(trace)
