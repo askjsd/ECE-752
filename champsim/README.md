@@ -133,6 +133,33 @@ Use these tiers when developing or comparing changes:
 | `--nflags 6` | 64 | Short development comparison |
 | `--nflags 8` | 256 | More representative intermediate experiment |
 | `--nflags 12` | 4,096 | Definitive gem5-equivalent flag-space run |
+| `--nflags 16` | 65,536 | Large space: needs `--jobs 16+` and deduplication |
+| `--nflags 20` | ~1.05M | Very large space: only viable with heavy deduplication |
+
+The flag-space ceiling (`MAX_FLAGS`) is 24, so `--nflags` can go up to 24
+(16.7M configurations). With binary deduplication only unique `.text` hashes
+are traced and simulated, so large spaces are tractable when many configs
+produce identical code — but compilation of all 2^N configs still happens,
+so use `--jobs` to match your core count and expect long runtimes.
+
+For search spaces beyond the default 12 flags, pass explicit flags with
+`--flags` instead of `--nflags`. Flags not in the default 12 that are known
+to affect `k_mix2` phases include `loop-interchange` (helps column-major
+matrix access, can hurt strided AXPY) and `version-loops-for-strides` (helps
+runtime-strided loops). Example:
+
+```powershell
+# 14-flag space: default 12 + loop-interchange + version-loops-for-strides
+python .\champsim\run_windows.py `
+  --kernels k_mix2 `
+  --flags unroll-loops peel-loops tree-loop-vectorize tree-slp-vectorize `
+          inline-functions ipa-cp-clone unswitch-loops predictive-commoning `
+          tracer schedule-insns ivopts split-loops loop-interchange `
+          version-loops-for-strides `
+  --out .\champsim\results\k_mix2_14flag
+```
+
+Do not pass `--nflags` and `--flags` together.
 
 The 12-flag run should be completed at least once for the final CARBS versus
 random-search versus hill-climbing comparison. Use fewer flags, fewer kernels,

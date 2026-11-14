@@ -12,7 +12,7 @@ DEFAULT_FLAGS = (
     "schedule-insns", "ivopts", "split-loops",
 )
 
-MAX_FLAGS = 16
+MAX_FLAGS = 24
 
 
 def validate(names):
