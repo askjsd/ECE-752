@@ -59,7 +59,13 @@ def random_search_online(lut, budget, seed):
     """Sample without replacement without enumerating the exponential space."""
     count = min(budget, 1 << lut.n)
     rng = random.Random(seed)
-    order = rng.sample(range(1 << lut.n), count)
+    selected = set()
+    total = 1 << lut.n
+    for value in range(total - count, total):
+        candidate = rng.randrange(value + 1)
+        selected.add(value if candidate in selected else candidate)
+    order = list(selected)
+    rng.shuffle(order)
     best = math.inf
     trace = []
     for cid in order:
@@ -101,7 +107,18 @@ def main():
         default=900,
         help="per-configuration ChampSim timeout in seconds (default: 900)",
     )
-    ap.add_argument("--budget", type=int, default=100)
+    ap.add_argument(
+        "--budget",
+        type=int,
+        default=None,
+        help="evaluations per tuner (default: 20 when comparing, otherwise 100)",
+    )
+    ap.add_argument(
+        "--compare",
+        action="store_true",
+        help="compare CARBS, random search, and hill climbing online",
+    )
+    ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--determinism", type=int, default=0)
     ap.add_argument(
         "--algorithm",
@@ -111,12 +128,15 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--force-trace", action="store_true")
     args = ap.parse_args()
+    if args.budget is None:
+        args.budget = 20 if args.compare else 100
     try:
         flags = select(args.nflags, args.flags)
     except ValueError as error:
         ap.error(str(error))
     if (
         args.budget < 1
+        or args.seeds < 1
         or args.jobs < 1
         or args.determinism < 0
         or args.simulation_timeout < 1
@@ -125,7 +145,7 @@ def main():
         or args.warmup_instructions < 0
     ):
         ap.error(
-            "--budget, --jobs, and --simulation-timeout must be positive; "
+            "--budget, --jobs, --seeds, and --simulation-timeout must be positive; "
             "trace instructions must be positive, and skip, warmup, and "
             "determinism counts cannot be negative"
         )
@@ -304,20 +324,183 @@ def main():
         )
         temporary_measurements.replace(measurements_path)
         print(
-            f"Measured config {cid}: {result if result is not None else 'invalid'} ({len(cache)}/{args.budget} unique)",
+            f"Measured config {cid}: {result if result is not None else 'invalid'} "
+            f"({len(cache)} unique configurations cached)",
             flush=True,
         )
         return result
 
-    # CARBS bootstraps from the -O3 identity when the sampled configuration
-    # matches it; other selectors do not need an extra bootstrap measurement.
+    def write_sparse_csv():
+        with (out / f"{args.kernel}.csv").open("w", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(
+                [
+                    "config_id",
+                    *(f"f_{name}" for name in flags),
+                    "cycles",
+                    "correct",
+                    "compiled_ok",
+                    "status",
+                ]
+            )
+            for cid in sorted(cache):
+                record = cache[cid]
+                writer.writerow(
+                    [
+                        cid,
+                        *[(cid >> bit) & 1 for bit in range(len(flags))],
+                        record["cycles"] or "",
+                        (
+                            ""
+                            if record["correct"] is None
+                            else int(record["correct"])
+                        ),
+                        (
+                            ""
+                            if record["compiled_ok"] is None
+                            else int(record["compiled_ok"])
+                        ),
+                        record["status"],
+                    ]
+                )
+
+    # Config 0 is the shared reference and CARBS bootstrap configuration.
     baseline_id = 0
-    if args.algorithm == "carbs":
+    if args.compare or args.algorithm == "carbs":
         measure(0)
     lut = OnlineLUT(len(flags), baseline_id, measure)
     lut.names = flags
     sys.path.insert(0, str(Path(args.repo).resolve()))
     from flagbench import tuners
+
+    if args.compare:
+        algorithms = ("carbs", "random", "hillclimb")
+        all_traces = {name: [] for name in algorithms}
+        for name in algorithms:
+            for seed in range(args.seed, args.seed + args.seeds):
+                if name == "carbs":
+                    trace, _ = tuners.carbs(
+                        lut, args.budget, seed, return_state=True
+                    )
+                elif name == "random":
+                    trace = random_search_online(lut, args.budget, seed)
+                else:
+                    trace = tuners.hill_climb(lut, args.budget, seed)
+                trace = list(trace)
+                if trace:
+                    trace.extend([trace[-1]] * (args.budget - len(trace)))
+                all_traces[name].append(trace[: args.budget])
+                print(
+                    f"Completed {name} seed {seed + 1}/{args.seeds}; "
+                    f"{len(cache)} unique configurations measured.",
+                    flush=True,
+                )
+
+        write_sparse_csv()
+        evaluation_axis = np.arange(1, args.budget + 1)
+        report = {
+            "kernel": args.kernel,
+            "flags": list(flags),
+            "budget": args.budget,
+            "seeds": args.seeds,
+            "seed_start": args.seed,
+            "measured_configurations": len(cache),
+            "total_configurations": total,
+            "reference_config_id": baseline_id,
+            "o3_identity_verified": baseline_meta.get(
+                "o3_identity_verified", False
+            ),
+            "algorithms": {},
+        }
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        rng = np.random.default_rng(17)
+        styles = {
+            "carbs": ("o", "-"),
+            "random": ("s", "--"),
+            "hillclimb": ("^", ":"),
+        }
+        for name, traces in all_traces.items():
+            values = np.asarray(
+                [
+                    [
+                        (
+                            float(x)
+                            if x is not None and math.isfinite(x)
+                            else np.nan
+                        )
+                        for x in trace
+                    ]
+                    for trace in traces
+                ],
+                dtype=float,
+            )
+            medians, lows, highs = [], [], []
+            for column in values.T:
+                finite = column[np.isfinite(column)]
+                if not len(finite):
+                    medians.append(np.nan)
+                    lows.append(np.nan)
+                    highs.append(np.nan)
+                    continue
+                medians.append(float(np.median(finite)))
+                boot = np.median(
+                    rng.choice(finite, size=(1000, len(finite)), replace=True),
+                    axis=1,
+                )
+                lows.append(float(np.percentile(boot, 2.5)))
+                highs.append(float(np.percentile(boot, 97.5)))
+            marker, linestyle = styles[name]
+            ax.plot(
+                evaluation_axis,
+                medians,
+                label=name,
+                marker=marker,
+                linestyle=linestyle,
+                markevery=max(1, args.budget // 10),
+                markersize=4,
+            )
+            ax.fill_between(evaluation_axis, lows, highs, alpha=0.18)
+            final = values[:, -1]
+            final = final[np.isfinite(final)]
+            report["algorithms"][name] = {
+                "median_best_cycles_by_evaluation": [
+                    None if not np.isfinite(value) else float(value)
+                    for value in medians
+                ],
+                "ci95_best_cycles_by_evaluation": [
+                    (
+                        None
+                        if not np.isfinite(low) or not np.isfinite(high)
+                        else [low, high]
+                    )
+                    for low, high in zip(lows, highs)
+                ],
+                "final_median_best_cycles": (
+                    float(np.median(final)) if len(final) else None
+                ),
+                "seeds_with_valid_measurements": int(len(final)),
+                "seed_traces": [
+                    [None if not math.isfinite(x) else x for x in trace]
+                    for trace in traces
+                ],
+            }
+        ax.set(
+            xlabel="tuner evaluations",
+            ylabel="best cycles (lower is better)",
+            title=f"{args.kernel}: online tuner comparison ({args.seeds} seeds)",
+        )
+        ax.grid(True, alpha=0.25)
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(out / f"score_compare_{args.kernel}.png", dpi=140)
+        plt.close(fig)
+        (out / "comparison.json").write_text(json.dumps(report, indent=2))
+        print(
+            f"Comparison complete: {len(cache)} unique configurations measured "
+            f"out of {total}. Results: {out}",
+            flush=True,
+        )
+        return
 
     tuner = (
         random_search_online
@@ -358,35 +541,7 @@ def main():
             indent=2,
         )
     )
-    ids = sorted(cache)
-    with (out / f"{args.kernel}.csv").open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(
-            [
-                "config_id",
-                *(f"f_{x}" for x in flags),
-                "cycles",
-                "correct",
-                "compiled_ok",
-                "status",
-            ]
-        )
-        for cid in ids:
-            rec = cache[cid]
-            w.writerow(
-                [
-                    cid,
-                    *[(cid >> j) & 1 for j in range(len(flags))],
-                    rec["cycles"] or "",
-                    "" if rec["correct"] is None else int(rec["correct"]),
-                    (
-                        ""
-                        if rec["compiled_ok"] is None
-                        else int(rec["compiled_ok"])
-                    ),
-                    rec["status"],
-                ]
-            )
+    write_sparse_csv()
     # Best-so-far progress plot; sparse measurements cannot support full-factorial analyses.
     best = np.minimum.accumulate(
         [x if x is not None else math.inf for x in trace]

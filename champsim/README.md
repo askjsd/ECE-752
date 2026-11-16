@@ -94,6 +94,45 @@ whether the selected flag space's `-O3` identity was verified. If it was not,
 CARBS uses configuration 0 as its bootstrap measurement, matching the legacy
 runner's documented fallback.
 
+### Compare tuners without exhaustive enumeration
+
+Add `--compare` to run CARBS, randomized search, and hill climbing online with
+the same evaluation budget and seeds. All three share the measurement cache,
+so a requested configuration is compiled and simulated only once. The runner
+writes `score_compare_<kernel>.png` with the median best cycle count and 95%
+bootstrap bands, plus `comparison.json` with per-seed traces and summary
+statistics. Lower cycle counts are better. This compares search progress on
+the sampled evaluations; it does not claim to know the global optimum of
+unevaluated configurations.
+
+The curated flag list supports `--nflags` through **24 flags** (16,777,216
+possible configurations). Adaptive mode also accepts up to **64 custom flags**
+through `--flags`; each must be supported by the selected compiler in both
+enabled and disabled forms.
+Runtime depends on the requested evaluations, not on that total. For example,
+a 24-flag comparison with 3 seeds and a budget of 20 makes at most 180 tuner
+requests per kernel, before duplicate configurations and identical binaries
+are reused:
+
+```powershell
+python .\champsim\run_carbs_adaptive.py `
+  --repo . `
+  --champsim-root .\champsim\.upstream-windows `
+  --pin C:\path\to\pin `
+  --tracer .\champsim\.upstream-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --out .\champsim\results\compare-k-mix2-24flag `
+  --kernel k_mix2 `
+  --nflags 24 `
+  --compare `
+  --seeds 3 `
+  --budget 20
+```
+
+A 2M-instruction evaluation took about one minute on the validation machine.
+At that rate, the 180-request upper bound is roughly three hours per kernel;
+actual time varies with hardware, kernels, and reuse. Reduce `--budget` to
+shorten the comparison or increase `--seeds` for more stable confidence bands.
+
 ### Kernels
 
 | Kernel | Description | Expected flag sensitivity |
@@ -184,17 +223,20 @@ Use these tiers when developing or comparing changes:
 | `--nflags 16` | 65,536 | Large space: needs `--jobs 16+` and deduplication |
 | `--nflags 20` | ~1.05M | Very large space: only viable with heavy deduplication |
 
-The flag-space ceiling (`MAX_FLAGS`) is 24, so `--nflags` can go up to 24
-(16.7M configurations). With binary deduplication only unique `.text` hashes
+The exhaustive workflow is capped at 24 flags. Adaptive mode supports up to
+64 custom flags because it never builds a full LUT or enumerates the space.
+With binary deduplication only unique `.text` hashes
 are traced and simulated, so large spaces are tractable when many configs
 produce identical code — but compilation of all 2^N configs still happens,
 so use `--jobs` to match your core count and expect long runtimes.
 
-For search spaces beyond the default 12 flags, pass explicit flags with
-`--flags` instead of `--nflags`. Flags not in the default 12 that are known
-to affect `k_mix2` phases include `loop-interchange` (helps column-major
-matrix access, can hurt strided AXPY) and `version-loops-for-strides` (helps
-runtime-strided loops). Example:
+`--nflags` supports the curated 24-flag order. Flags 13-24 extend the default
+12 with `unroll-all-loops`, `sched-pressure`, `gcse-after-reload`,
+`align-loops`, `align-functions`, `loop-interchange`,
+`version-loops-for-strides`, `loop-unroll-and-jam`,
+`tree-loop-distribution`, `ipa-icf`, `split-paths`, and `schedule-insns2`.
+These switches were checked with the WSL MinGW compiler. Use `--flags` when
+you want a custom order or subset. For example:
 
 ```powershell
 # 14-flag space: default 12 + loop-interchange + version-loops-for-strides

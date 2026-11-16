@@ -278,6 +278,11 @@ def main():
         flags = select(args.nflags, args.flags)
     except ValueError as error:
         raise SystemExit(str(error))
+    if args.config_ids is None and len(flags) > 24:
+        raise SystemExit(
+            "Exhaustive simulation is limited to 24 flags. Use "
+            "run_carbs_adaptive.py for larger flag spaces."
+        )
 
     repo = os.path.abspath(args.repo)
     if repo not in sys.path:
@@ -893,6 +898,10 @@ def main():
     shutil.copyfile(
         lut_base + ".json", os.path.join(out, args.kernel + ".json")
     )
+
+    if args.config_ids is not None:
+        print(json.dumps({"results": out, "configs": len(records)}))
+        return
 
     lut = LUT(lut_base + ".csv")
     trace, probabilities = carbs(
