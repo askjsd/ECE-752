@@ -55,6 +55,19 @@ class OnlineLUT:
         return min(values) if values else math.inf
 
 
+def discard_saved_simulation_logs(backend, config_ids, include_o3=False):
+    """Drop verbose simulator output whose results are already cached."""
+    log_dirs = [Path(backend) / "simulations" / str(cid) for cid in config_ids]
+    if include_o3:
+        log_dirs.append(Path(backend) / "simulations" / "plain-o3")
+    for log_dir in log_dirs:
+        (log_dir / "stdout.txt").unlink(missing_ok=True)
+        try:
+            log_dir.rmdir()
+        except OSError:
+            pass
+
+
 def random_search_online(lut, budget, seed):
     """Sample without replacement without enumerating the exponential space."""
     count = min(budget, 1 << lut.n)
@@ -216,6 +229,21 @@ def main():
     hash_results_path = backend / "hash-results.json"
     attempted = set()
 
+    # Older adaptive runs kept ChampSim's verbose per-instruction stdout even
+    # though the durable measurement cache already contains the parsed result.
+    # Prune those logs when resuming, without touching traces or failure logs.
+    cached_successes = [
+        cid for cid, record in cache.items() if record.get("status") == "valid"
+    ]
+    discard_saved_simulation_logs(
+        backend,
+        cached_successes,
+        include_o3=any(
+            source.get("o3_cycles") is not None
+            for source in (meta or {}, baseline_meta or {})
+        ),
+    )
+
     def measure(cid):
         nonlocal baseline_meta, meta
         if cid < 0 or cid >= total:
@@ -294,7 +322,8 @@ def main():
                 }
         finally:
             # Traces grow by 64 bytes per instruction; discard one-use artifacts
-            # after the measurement is durable in measurements.json.
+            # after the legacy runner finishes. The parsed result and stdout
+            # cleanup are committed to measurements.json below.
             suffix = ".exe" if os.name == "nt" else ""
             for path in (
                 one / "binaries" / f"{cid}{suffix}",
@@ -330,6 +359,12 @@ def main():
             )
         )
         temporary_measurements.replace(measurements_path)
+        if cache[cid]["status"] == "valid":
+            discard_saved_simulation_logs(
+                backend,
+                [cid],
+                include_o3=bool(meta and meta.get("o3_cycles") is not None),
+            )
         print(
             f"Measured config {cid}: {result if result is not None else 'invalid'} "
             f"({len(cache)} unique configurations cached)",

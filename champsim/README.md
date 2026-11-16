@@ -44,9 +44,11 @@ selected tuner for one configuration at a time and compiles, traces, and
 simulates only that configuration. The sampled measurements are cached, so a
 repeated request does not create another binary or trace. Compiled reference
 baselines are reused, and configurations with the same `.text` hash reuse the
-recorded simulation. After each result is saved, the one-use binary and trace
-are deleted; only small logs, baselines, and the measurement cache remain. This
-lets you explore larger spaces without first materializing all `2^N` variants
+recorded simulation. After each valid result is saved, the one-use binary,
+trace, and verbose ChampSim stdout are deleted; small compiler/tracer logs,
+baselines, and the measurement cache remain. Failure output is kept for
+troubleshooting. This lets you explore larger spaces without first
+materializing all `2^N` variants
 or retaining a trace for every evaluation.
 
 For example, use 20 flags and let CARBS request up to 100 evaluations:
@@ -236,10 +238,12 @@ Each adaptive output directory contains a sparse `<kernel>.csv`, a
 `measurements.json` resume cache, run history, and graphs. A comparison run
 writes `comparison.json`, `score_compare_<kernel>.png` (best cycles by
 requested evaluation), and `speedup_compare_<kernel>.png` (speedup against
-measured plain `-O3`). The measurement cache and small logs are retained so a
-run can resume; one-use binaries and traces are deleted after their result is
-saved. Keep the requested output directory if you want to resume or inspect
-per-configuration results.
+measured plain `-O3`). The measurement cache and small compiler/tracer logs
+are retained so a run can resume; successful simulator stdout, one-use
+binaries, and traces are deleted after each result is saved. Existing cached
+successful results also have their redundant simulator logs pruned when
+resumed. Failure logs are kept for troubleshooting. Keep the requested output
+directory if you want to resume or inspect per-configuration results.
 
 ### Windows prerequisites
 
