@@ -476,3 +476,13 @@ x86 flag configurations
 
 Generated traces, binaries, logs, and results stay under the requested output
 directory and should not be committed.
+
+## Adaptive compiler-flag simulation results
+
+The adaptive simulator evaluates requested configurations instead of enumerating the full flag space. The completed `k_optstress` run covered 24 flags (16,777,216 possible configurations), with a budget of 20 evaluations per algorithm and three seeds. It recorded 174 requested configurations, of which 157 produced valid measurements. The plots show the median best-so-far cycle count and corresponding speedup against the saved plain `-O3` measurement (330,306 cycles); shaded areas show the reported 95% intervals across seeds.
+
+![Best-so-far cycles for CARBS, random search, and hill climb against plain -O3](../docs/adaptive-results/k_optstress_24flags_cycles.png)
+
+![Speedup for CARBS, random search, and hill climb against plain -O3](../docs/adaptive-results/k_optstress_24flags_speedup.png)
+
+At the final evaluation, the median best results were 128,861 cycles for CARBS (2.56x), 128,861 for random search (2.56x), and 130,998 for hill climb (2.52x). The plain `-O3` cycle count was measured and is plotted, but the run metadata marks its identity verification as false; treat the speedup comparison as provisional until that identity is verified. The run artifacts and per-seed measurements are in `results/compare-k-optstress-24flags/`.
