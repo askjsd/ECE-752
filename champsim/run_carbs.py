@@ -180,6 +180,13 @@ def main():
         help="explicit compiler optimization flags; overrides the default",
     )
     parser.add_argument(
+        "--config-ids",
+        nargs="+",
+        type=int,
+        default=None,
+        help="compile and simulate only these configuration IDs (used by adaptive runners)",
+    )
+    parser.add_argument(
         "--compiler",
         choices=("wsl-mingw", "clang"),
         default="wsl-mingw",
@@ -337,6 +344,18 @@ def main():
     o3_hash = text_hash(o3_binary, objcopy, hash_dir)
 
     total_configs = 1 << len(flags)
+    config_ids = (
+        sorted(set(args.config_ids))
+        if args.config_ids is not None
+        else list(range(total_configs))
+    )
+    invalid_ids = [
+        cid for cid in config_ids if cid < 0 or cid >= total_configs
+    ]
+    if invalid_ids:
+        raise SystemExit(
+            f"Configuration IDs must be in [0, {total_configs - 1}]: {invalid_ids}"
+        )
     print(
         f"=== Compiling {total_configs} flag configurations ({args.jobs} jobs) ===",
         flush=True,
@@ -361,8 +380,7 @@ def main():
     compiled_configs = []
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         futures = {
-            executor.submit(compile_one, cid): cid
-            for cid in range(total_configs)
+            executor.submit(compile_one, cid): cid for cid in config_ids
         }
         done_count = 0
         for f in as_completed(futures):
@@ -370,9 +388,9 @@ def main():
             done_count += 1
             if result is not None:
                 compiled_configs.append(result)
-            if done_count % 256 == 0 or done_count == total_configs:
+            if done_count % 256 == 0 or done_count == len(config_ids):
                 print(
-                    f"  Compiled {done_count}/{total_configs} configurations... ({len(compiled_configs)} ok)",
+                    f"  Compiled {done_count}/{len(config_ids)} requested configurations... ({len(compiled_configs)} ok)",
                     flush=True,
                 )
 

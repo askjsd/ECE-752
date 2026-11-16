@@ -46,6 +46,40 @@ and the same budgets as gem5: `10 20 50 100 200`. Each kernel gets an isolated
 directory under `champsim\results\windows`; root-level LUT aliases are created
 for the shared graph evaluator.
 
+## Adaptive runs for larger flag spaces
+
+`run_carbs_adaptive.py` is an optional online workflow. It preserves
+`run_carbs.py` and `run_windows.py` for exhaustive experiments, but asks the
+selected tuner for one configuration at a time and compiles, traces, and
+simulates only that configuration. The sampled measurements are cached, so a
+repeated request does not create another binary or trace. This lets you explore
+larger spaces without first materializing all `2^N` variants.
+
+For example, use 20 flags and let CARBS request up to 100 evaluations:
+
+```powershell
+python .\champsim\run_carbs_adaptive.py `
+  --repo . `
+  --champsim-root .\champsim\.upstream-windows `
+  --pin C:\path\to\pin `
+  --tracer .\champsim\.upstream-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --out .\champsim\results\adaptive-k-mix2 `
+  --kernel k_mix2 `
+  --nflags 20 `
+  --budget 100 `
+  --algorithm carbs
+```
+
+Use `--algorithm random` or `--algorithm hillclimb` to drive the same online
+measurement loop with those selectors. The output includes `measurements.json`
+(resume cache), the sparse `<kernel>.csv`, `carbs.json` (run history), and
+`score_<kernel>.png` (best measured cycles by evaluation). The graph describes
+the adaptive run only; sparse sampling does not provide exhaustive ground truth
+or support the full-factorial CARBS-versus-random comparison produced by
+`run_windows.py`. Increase `--budget` to spend more compilation and simulation
+time. The per-request backend currently starts the legacy runner, so a large
+budget has some process-startup overhead.
+
 ### Kernels
 
 | Kernel | Description | Expected flag sensitivity |
