@@ -39,7 +39,7 @@
     "latency": 2,
     "max_tag_check": 2,
     "max_fill": 2,
-    "prefetcher": "no"
+    "prefetcher": "next_line"
   },
   "L1D": {
     "sets": 64,
@@ -51,7 +51,7 @@
     "latency": 2,
     "max_tag_check": 2,
     "max_fill": 2,
-    "prefetcher": "no"
+    "prefetcher": "ip_stride"
   },
   "L2C": {
     "sets": 512,

@@ -15,7 +15,8 @@ FlagBench datapath:
 - 256 KiB, 8-way L2 cache
 - 1 MiB, 16-way LLC
 - 2 GHz nominal frequency
-- no prefetcher and LRU LLC replacement
+- next-line L1 instruction prefetching and IP-stride L1 data prefetching
+- no L2/LLC prefetching and LRU LLC replacement
 
 ChampSim is trace-driven, so it models the pipeline and memory hierarchy after
 the x86 binary has been traced. It does not execute the ELF directly like gem5.
@@ -38,6 +39,17 @@ From the repository root, run:
 ```powershell
 python .\champsim\run_windows.py
 ```
+
+After changing `champsim_config.json`, rebuild the native simulator and PIN
+tracer before adaptive runs:
+
+```powershell
+python .\champsim\run_windows.py --build-only
+```
+
+The build step regenerates ChampSim's module configuration from that JSON
+before compiling. GNU Make and LLVM Clang must be available on `PATH`; PIN is
+auto-detected under Downloads or can be passed with `--pin`.
 
 The defaults use all six gem5 kernels (`k_stencil`, `k_ptrchase`, `k_branchy`,
 `k_reduce`, `k_crc32`, and `k_helper`) plus the new `k_mix2` flag-stress kernel,
@@ -108,7 +120,12 @@ unevaluated configurations.
 The curated flag list supports `--nflags` through **24 flags** (16,777,216
 possible configurations). Adaptive mode also accepts up to **64 custom flags**
 through `--flags`; each must be supported by the selected compiler in both
-enabled and disabled forms.
+enabled and disabled forms. The tuner and measurement cache scale with the
+requested evaluation budget, not the exponential configuration count. The
+current 64-flag custom limit is a practical interface limit, not an observed
+algorithmic limit; 24 curated flags have compiler validation, while 64 was
+validated with mock search requests. Use curated flags for a real run unless
+you have checked every custom switch with the selected compiler.
 Runtime depends on the requested evaluations, not on that total. For example,
 a 24-flag comparison with 3 seeds and a budget of 20 makes at most 180 tuner
 requests per kernel, before duplicate configurations and identical binaries
@@ -132,6 +149,10 @@ A 2M-instruction evaluation took about one minute on the validation machine.
 At that rate, the 180-request upper bound is roughly three hours per kernel;
 actual time varies with hardware, kernels, and reuse. Reduce `--budget` to
 shorten the comparison or increase `--seeds` for more stable confidence bands.
+A bounded 200k-instruction validation completed in about 20 seconds including
+compile and trace setup. Shorter traces reduce runtime and trace-generation
+storage roughly in proportion to their instruction count, but may increase
+sampling noise; 10k was too short to complete reliably in an earlier run.
 
 ### Kernels
 
@@ -144,8 +165,35 @@ shorten the comparison or increase `--seeds` for more stable confidence bands.
 | `k_crc32` | Bitwise CRC32 | Low-moderate: unroll + schedule |
 | `k_helper` | Hot helper calls | Moderate: inline + IPA |
 | `k_mix2` | 10-phase flag-stress kernel | **High**: stencil, reduce, CRC, helper, interchange, stride, FP matmul, IPA stress — opposing flag preferences produce the widest cycle range |
+| `k_optstress` | Repeated independent floating-point array updates | **High for vectorization flags**: designed to expose loop and SLP vectorization differences |
 
-`k_mix2` is the recommended kernel for tuner discrimination: its FP matrix-multiply
+`k_optstress` isolates compiler-flag sensitivity in one hot loop and is the
+recommended first check when validating whether vectorization settings change
+performance. On the validation machine, adaptive ChampSim measured 14 of its
+16 four-flag configurations with checksums correct; the sampled cycle counts
+ranged from 138,259 to 331,507 (about 2.4x). Skip the initialization instructions
+so the trace covers the hot loop. This is a small demonstration, not a stable
+cross-machine performance claim:
+
+```powershell
+python .\champsim\run_carbs_adaptive.py `
+  --repo . `
+  --champsim-root .\champsim\.upstream-windows `
+  --pin C:\path\to\pin `
+  --tracer .\champsim\.upstream-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --out .\champsim\results\compare-k-optstress `
+  --kernel k_optstress `
+  --nflags 4 `
+  --compare `
+  --seeds 3 `
+  --budget 4 `
+  --trace-instructions 500000 `
+  --trace-skip-instructions 2000000 `
+  --warmup-instructions 10000
+```
+
+The graph and per-configuration results are written to the output directory.
+`k_mix2` is the recommended kernel for broader tuner discrimination: its FP matrix-multiply
 phase benefits strongly from vectorization (4-8x with the right flags) while its CRC
 phase prefers scalar code, and loop-interchange helps its column-major matrix phase
 but can hurt the strided AXPY. No flag combination dominates every phase, so the

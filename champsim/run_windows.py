@@ -9,12 +9,15 @@ that LUT and generate the same reports and plots as the gem5 workflow.
 
 import argparse
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
-from portable_flags import DEFAULT_FLAGS, select
+from portable_flags import (
+    DEFAULT_FLAGS,
+    select,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CHAMPSIM = Path(__file__).resolve().parent
@@ -43,18 +46,33 @@ def find_pin(explicit):
         fail(f"Intel PIN was not found at {root}")
 
     downloads = Path.home() / "Downloads"
-    candidates = sorted(downloads.glob("pin-external-*-windows"), key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates = sorted(
+        downloads.glob("pin-external-*-windows"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     for candidate in candidates:
         nested = candidate / candidate.name
         root = nested if (nested / "pin.exe").is_file() else candidate
         if (root / "pin.exe").is_file():
             return root
-    fail("Intel PIN was not found. Pass --pin with the directory containing pin.exe.")
+    fail(
+        "Intel PIN was not found. Pass --pin with the directory containing pin.exe."
+    )
 
 
 def build(pin, make):
     if not make:
         return
+    subprocess.run(
+        [
+            sys.executable,
+            str(UPSTREAM / "config.sh"),
+            str(CHAMPSIM / "champsim_config.json"),
+        ],
+        cwd=UPSTREAM,
+        check=True,
+    )
     make_path = command_path("make", "GNU Make")
     subprocess.run(
         [
@@ -67,7 +85,11 @@ def build(pin, make):
         cwd=UPSTREAM,
         check=True,
     )
-    subprocess.run([str(make_path), f"PIN_ROOT={pin}"], cwd=UPSTREAM / "tracer" / "pin", check=True)
+    subprocess.run(
+        [str(make_path), f"PIN_ROOT={pin}"],
+        cwd=UPSTREAM / "tracer" / "pin",
+        check=True,
+    )
 
 
 def run_stage(label, args, cwd=None, env=None):
@@ -76,36 +98,106 @@ def run_stage(label, args, cwd=None, env=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--kernels",
         nargs="+",
-        default=["k_stencil", "k_ptrchase", "k_branchy", "k_reduce", "k_crc32", "k_helper", "k_mix2"],
+        default=[
+            "k_stencil",
+            "k_ptrchase",
+            "k_branchy",
+            "k_reduce",
+            "k_crc32",
+            "k_helper",
+            "k_mix2",
+        ],
         help="kernel source names without .c",
     )
-    parser.add_argument("--nflags", type=int, default=None,
-                        help="number of leading gem5 flags to use (default: 12)")
-    parser.add_argument("--flags", nargs="+", default=None,
-                        help="explicit compiler optimization flags; overrides the default")
-    parser.add_argument("--compiler", choices=("wsl-mingw", "clang"), default="wsl-mingw",
-                        help="wsl-mingw is the portable GCC-equivalent backend")
+    parser.add_argument(
+        "--nflags",
+        type=int,
+        default=None,
+        help="number of leading gem5 flags to use (default: 12)",
+    )
+    parser.add_argument(
+        "--flags",
+        nargs="+",
+        default=None,
+        help="explicit compiler optimization flags; overrides the default",
+    )
+    parser.add_argument(
+        "--compiler",
+        choices=("wsl-mingw", "clang"),
+        default="wsl-mingw",
+        help="wsl-mingw is the portable GCC-equivalent backend",
+    )
     parser.add_argument("--pin", help="Intel PIN directory containing pin.exe")
-    parser.add_argument("--out", help="output directory; defaults to champsim/results/windows")
+    parser.add_argument(
+        "--out", help="output directory; defaults to champsim/results/windows"
+    )
     parser.add_argument("--trace-instructions", type=int, default=2_000_000)
-    parser.add_argument("--trace-skip-instructions", type=int, default=1_000,
-                        help="PIN instructions to skip before the Windows trace window")
+    parser.add_argument(
+        "--trace-skip-instructions",
+        type=int,
+        default=1_000,
+        help="PIN instructions to skip before the Windows trace window",
+    )
     parser.add_argument("--warmup-instructions", type=int, default=100_000)
-    parser.add_argument("--jobs", "-j", type=int, default=8, help="parallel compilation jobs (default: 8)")
-    parser.add_argument("--determinism", type=int, default=0, help="number of determinism checks (default: 0)")
-    parser.add_argument("--seeds", type=int, default=100, help="evaluation seeds for comparison plots")
-    parser.add_argument("--budgets", type=int, nargs="+", default=DEFAULT_BUDGETS)
-    parser.add_argument("--strict-o3", action="store_true",
-                        help="fail unless plain Clang -O3 matches an explicit configuration")
-    parser.add_argument("--build", action="store_true", help="rebuild ChampSim and the PIN tracer")
-    parser.add_argument("--force-trace", action="store_true",
-                        help="regenerate every trace and simulation instead of reusing cached results")
-    parser.add_argument("--skip-tests", action="store_true", help="skip the shared tuner unit tests")
-    parser.add_argument("--no-graphs", action="store_true", help="stop after the native LUT/CARBS stage")
+    parser.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=8,
+        help="parallel compilation jobs (default: 8)",
+    )
+    parser.add_argument(
+        "--determinism",
+        type=int,
+        default=0,
+        help="number of determinism checks (default: 0)",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        default=100,
+        help="evaluation seeds for comparison plots",
+    )
+    parser.add_argument(
+        "--budgets", type=int, nargs="+", default=DEFAULT_BUDGETS
+    )
+    parser.add_argument(
+        "--strict-o3",
+        action="store_true",
+        help="fail unless plain Clang -O3 matches an explicit configuration",
+    )
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="rebuild ChampSim and the PIN tracer",
+    )
+    parser.add_argument(
+        "--build-only",
+        action="store_true",
+        help="configure and rebuild ChampSim and the PIN tracer, then exit",
+    )
+    parser.add_argument(
+        "--force-trace",
+        action="store_true",
+        help="regenerate every trace and simulation instead of reusing cached results",
+    )
+    parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="skip the shared tuner unit tests",
+    )
+    parser.add_argument(
+        "--no-graphs",
+        action="store_true",
+        help="stop after the native LUT/CARBS stage",
+    )
     args = parser.parse_args()
     try:
         flags = select(args.nflags, args.flags)
@@ -113,27 +205,45 @@ def main():
         fail(str(error))
 
     if os.name != "nt":
-        fail("run_windows.py is for native Windows. Use the Linux/WSL workflow on non-Windows hosts.")
+        fail(
+            "run_windows.py is for native Windows. Use the Linux/WSL workflow on non-Windows hosts."
+        )
     if not UPSTREAM.is_dir():
         fail(f"ChampSim source was not found: {UPSTREAM}")
 
     llvm = Path(r"C:\Program Files\LLVM\bin")
     if (llvm / "clang.exe").is_file():
-        os.environ["PATH"] = str(llvm) + os.pathsep + os.environ.get("PATH", "")
+        os.environ["PATH"] = (
+            str(llvm) + os.pathsep + os.environ.get("PATH", "")
+        )
     command_path("python", "Python")
     command_path("clang", "LLVM Clang")
     command_path("llvm-objcopy", "LLVM objcopy")
 
     pin = find_pin(args.pin)
-    build(pin, args.build)
+    build(pin, args.build or args.build_only)
+    if args.build_only:
+        return
     if not SIMULATOR.is_file():
-        fail(f"Native ChampSim executable was not found: {SIMULATOR}. Re-run with --build.")
+        fail(
+            f"Native ChampSim executable was not found: {SIMULATOR}. Re-run with --build."
+        )
     if not TRACER.is_file():
-        fail(f"Windows PIN tracer was not found: {TRACER}. Re-run with --build.")
+        fail(
+            f"Windows PIN tracer was not found: {TRACER}. Re-run with --build."
+        )
 
     runtime = UPSTREAM / "vcpkg_installed" / "x64-windows" / "bin"
     bin_dir = UPSTREAM / "bin"
-    os.environ["PATH"] = str(llvm) + os.pathsep + str(bin_dir) + os.pathsep + str(runtime) + os.pathsep + os.environ.get("PATH", "")
+    os.environ["PATH"] = (
+        str(llvm)
+        + os.pathsep
+        + str(bin_dir)
+        + os.pathsep
+        + str(runtime)
+        + os.pathsep
+        + os.environ.get("PATH", "")
+    )
     output = Path(args.out) if args.out else CHAMPSIM / "results" / "windows"
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -145,28 +255,49 @@ def main():
             [
                 sys.executable,
                 str(CHAMPSIM / "run_carbs.py"),
-                "--repo", str(ROOT),
-                "--champsim-root", str(UPSTREAM),
-                "--pin", str(pin),
-                "--tracer", str(TRACER),
-                "--out", str(kernel_output),
-                "--kernel", kernel,
-                "--flags", *flags,
-                "--compiler", args.compiler,
-                "--jobs", str(args.jobs),
-                "--trace-instructions", str(args.trace_instructions),
-                "--trace-skip-instructions", str(args.trace_skip_instructions),
-                "--warmup-instructions", str(args.warmup_instructions),
-                "--determinism", str(args.determinism),
+                "--repo",
+                str(ROOT),
+                "--champsim-root",
+                str(UPSTREAM),
+                "--pin",
+                str(pin),
+                "--tracer",
+                str(TRACER),
+                "--out",
+                str(kernel_output),
+                "--kernel",
+                kernel,
+                "--flags",
+                *flags,
+                "--compiler",
+                args.compiler,
+                "--jobs",
+                str(args.jobs),
+                "--trace-instructions",
+                str(args.trace_instructions),
+                "--trace-skip-instructions",
+                str(args.trace_skip_instructions),
+                "--warmup-instructions",
+                str(args.warmup_instructions),
+                "--determinism",
+                str(args.determinism),
                 *(("--strict-o3",) if args.strict_o3 else ()),
                 *(("--force-trace",) if args.force_trace else ()),
             ],
         )
-        shutil.copyfile(kernel_output / f"{kernel}.csv", output / f"{kernel}.csv")
-        shutil.copyfile(kernel_output / f"{kernel}.json", output / f"{kernel}.json")
+        shutil.copyfile(
+            kernel_output / f"{kernel}.csv", output / f"{kernel}.csv"
+        )
+        shutil.copyfile(
+            kernel_output / f"{kernel}.json", output / f"{kernel}.json"
+        )
 
     if not args.skip_tests:
-        run_stage("tuner unit tests", [sys.executable, str(ROOT / "flagbench" / "test_tuners.py")], cwd=ROOT / "flagbench")
+        run_stage(
+            "tuner unit tests",
+            [sys.executable, str(ROOT / "flagbench" / "test_tuners.py")],
+            cwd=ROOT / "flagbench",
+        )
 
     if not args.no_graphs:
         graphs = output / "graphs"
@@ -175,13 +306,20 @@ def main():
             [
                 sys.executable,
                 str(ROOT / "flagbench" / "evaluate.py"),
-                "--luts", str(output),
-                "--out", str(graphs),
-                "--kernels", *args.kernels,
-                "--seeds", str(args.seeds),
-                "--budgets", *[str(b) for b in args.budgets],
-                "--min-headroom", "0",
-                "--min-denom-frac", "0",
+                "--luts",
+                str(output),
+                "--out",
+                str(graphs),
+                "--kernels",
+                *args.kernels,
+                "--seeds",
+                str(args.seeds),
+                "--budgets",
+                *[str(b) for b in args.budgets],
+                "--min-headroom",
+                "0",
+                "--min-denom-frac",
+                "0",
             ],
             cwd=ROOT / "flagbench",
         )
