@@ -171,7 +171,7 @@ def main():
     parser.add_argument(
         "--strict-o3",
         action="store_true",
-        help="fail unless plain Clang -O3 matches an explicit configuration",
+        help="fail unless plain -O3 matches an explicit configuration",
     )
     parser.add_argument(
         "--build",

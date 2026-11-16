@@ -264,7 +264,7 @@ def main():
     parser.add_argument(
         "--strict-o3",
         action="store_true",
-        help="fail if plain Clang -O3 has no exact explicit configuration match",
+        help="fail if plain -O3 has no exact explicit configuration match",
     )
     parser.add_argument(
         "--force-trace",
@@ -400,15 +400,24 @@ def main():
         out, "plain-o3.exe" if os.name == "nt" else "plain-o3"
     )
     o3_log = os.path.join(out, "compile-logs", "plain-o3.log")
-    if not (
+    o3_hash = None
+    reuse_o3 = (
         args.reuse_baseline
         and os.path.isfile(o3_binary)
         and os.path.getsize(o3_binary) > 0
-    ):
+    )
+    if reuse_o3:
+        o3_hash = text_hash(o3_binary, objcopy, hash_dir)
+    else:
         result = compile_binary(o3_binary, "-O3", [], o3_log)
         if result.returncode:
-            raise SystemExit("Plain -O3 compilation failed; see " + o3_log)
-    o3_hash = text_hash(o3_binary, objcopy, hash_dir)
+            print(
+                "WARNING: Plain -O3 compilation failed; continuing without "
+                "the comparison baseline. See " + o3_log,
+                flush=True,
+            )
+        else:
+            o3_hash = text_hash(o3_binary, objcopy, hash_dir)
 
     total_configs = 1 << len(flags)
     config_ids = (
@@ -481,6 +490,12 @@ def main():
         config_info.append((config_id, binary, binary_hash))
         if binary_hash not in unique_binaries:
             unique_binaries[binary_hash] = (config_id, binary)
+
+    # Measure plain -O3 as its own reference when no requested configuration
+    # has identical code. Adaptive callers pass known hash results, so this
+    # costs one trace/simulation at most and is reused by later evaluations.
+    if o3_hash is not None and o3_hash not in unique_binaries:
+        unique_binaries[o3_hash] = ("plain-o3", o3_binary)
 
     results_by_hash = {}
     if args.known_hash_results:
@@ -786,6 +801,14 @@ def main():
             flush=True,
         )
 
+    o3_stats = results_by_hash.get(o3_hash) if o3_hash is not None else None
+    if o3_stats is None:
+        print(
+            "WARNING: Plain -O3 baseline could not be measured; continuing "
+            "without it.",
+            flush=True,
+        )
+
     try:
         shutil.rmtree(hash_dir, ignore_errors=True)
     except Exception:
@@ -827,7 +850,7 @@ def main():
     o3_matches = [
         record["config_id"]
         for record in records
-        if record["binary_hash"] == o3_hash
+        if o3_hash is not None and record["binary_hash"] == o3_hash
     ]
     o3_config_id = o3_matches[0] if o3_matches else None
     o3_identity_verified = o3_config_id is not None
@@ -838,7 +861,8 @@ def main():
                 "choose a flag space that represents Clang's -O3 defaults"
             )
         print(
-            "WARNING: plain Clang -O3 has no exact explicit configuration match; using config 0 as baseline"
+            "Plain -O3 is not identical to a sampled configuration; "
+            "its separate baseline is measured or reused by binary hash."
         )
         o3_config_id = 0
     o3_defaults = {
@@ -886,6 +910,9 @@ def main():
                 "o3_defaults": o3_defaults,
                 "o3_hash": o3_hash,
                 "o3_identity_verified": o3_identity_verified,
+                "o3_cycles": o3_stats[0] if o3_stats else None,
+                "o3_instructions": o3_stats[1] if o3_stats else None,
+                "o3_ipc": o3_stats[2] if o3_stats else None,
                 "unique_binaries": len(by_hash),
                 "isa": "X86",
                 "simulator": "ChampSim",
@@ -905,7 +932,11 @@ def main():
 
     lut = LUT(lut_base + ".csv")
     trace, probabilities = carbs(
-        lut, budget=len(records), seed=0, return_state=True
+        lut,
+        budget=len(records),
+        seed=0,
+        return_state=True,
+        bootstrap=bool(o3_identity_verified),
     )
     with open(os.path.join(out, "carbs.json"), "w") as stream:
         json.dump(
@@ -915,6 +946,7 @@ def main():
                 "evaluations": lut.evals,
                 "optimum_cycles": lut.optimum(),
                 "o3_cycles": lut.o3_cycles(),
+                "initial_flag_probabilities": {name: 0.5 for name in flags},
             },
             stream,
             indent=2,

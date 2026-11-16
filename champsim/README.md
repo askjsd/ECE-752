@@ -89,7 +89,8 @@ python .\champsim\run_carbs_adaptive.py `
 Use `--algorithm random` or `--algorithm hillclimb` to drive the same online
 measurement loop with those selectors. The output includes `measurements.json`
 (resume cache), the sparse `<kernel>.csv`, `carbs.json` (run history), and
-`score_<kernel>.png` (best measured cycles by evaluation). The graph describes
+`score_<kernel>.png` (best measured cycles by evaluation), and
+`speedup_<kernel>.png` (speedup over plain `-O3`). The graph describes
 the adaptive run only; sparse sampling does not provide exhaustive ground truth
 or support the full-factorial CARBS-versus-random comparison produced by
 `run_windows.py`. Increase `--budget` to spend more compilation and simulation
@@ -101,19 +102,27 @@ default; timed-out configurations are recorded as invalid and the search
 continues. Adjust this with `--simulation-timeout` if a valid long trace needs
 more time. The legacy exhaustive runner leaves timeouts disabled unless that
 option is passed directly. Windows skips the first 1,000 PIN instructions by
-default, matching the one-command Windows workflow. `carbs.json` records
-whether the selected flag space's `-O3` identity was verified. If it was not,
-CARBS uses configuration 0 as its bootstrap measurement, matching the legacy
-runner's documented fallback.
+default, matching the one-command Windows workflow. Every run measures plain
+`-O3` as a separate baseline when it does not match a requested configuration.
+It is not counted as a tuner evaluation. CARBS starts with uniform 0.5 flag
+probabilities and chooses its first candidate from that prior. The O3 result
+is cached by binary hash and shown as a reference line in adaptive
+cycle graphs and as a 1.0x reference in a companion speedup graph. It is a
+comparison value, not a flag configuration or a change to CARBS's probability
+initialization: CARBS still starts every flag at probability 0.5. If the extra
+baseline measurement fails, the rest of the run continues; baseline lines and
+speedup graphs are omitted.
 
 ### Compare tuners without exhaustive enumeration
 
 Add `--compare` to run CARBS, randomized search, and hill climbing online with
 the same evaluation budget and seeds. All three share the measurement cache,
 so a requested configuration is compiled and simulated only once. The runner
-writes `score_compare_<kernel>.png` with the median best cycle count and 95%
-bootstrap bands, plus `comparison.json` with per-seed traces and summary
-statistics. Lower cycle counts are better. This compares search progress on
+writes `score_compare_<kernel>.png` with median best cycle count and 95%
+bootstrap bands, `speedup_compare_<kernel>.png` with best speedup over plain
+`-O3` (the reference line is 1.0x), and `comparison.json` with per-seed traces,
+speedup summaries, and the baseline cycle count. Lower cycle counts and
+higher speedups are better. This compares search progress on
 the sampled evaluations; it does not claim to know the global optimum of
 unevaluated configurations.
 
@@ -390,8 +399,10 @@ explicit fallback; it is not equivalent for GCC-only optimization flags.
 The 12-flag default contains 4,096 configurations per kernel, so use a
 smaller explicit `--flags` list for smoke tests.
 Use `--strict-o3` when the selected flag space must contain an exact hash match
-for plain `-O3`; otherwise the workflow records that the O3 identity is
-unverified and uses configuration zero as the comparison baseline.
+for plain `-O3`. By default, plain `-O3` is measured separately when it does
+not match any sampled configuration, and its actual cycle count is used as the
+speedup baseline. A failed baseline measurement is reported but does not stop
+the remaining run.
 
 The graph lines are the median normalized score over seeds; shaded regions are
 95% bootstrap confidence intervals. The report also includes speedup,

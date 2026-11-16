@@ -276,6 +276,12 @@ def main():
             meta = json.loads((one / "champsim.json").read_text())
             if cid == 0:
                 baseline_meta = dict(meta)
+            if meta.get("o3_cycles") is not None:
+                hash_results[meta["o3_hash"]] = {
+                    "cycles": float(meta["o3_cycles"]),
+                    "instructions": float(meta["o3_instructions"]),
+                    "ipc": float(meta["o3_ipc"]),
+                }
             with (one / "champsim.csv").open(encoding="utf-8") as stream:
                 row = next(csv.DictReader(stream), None)
             result = None
@@ -293,6 +299,7 @@ def main():
             for path in (
                 one / "binaries" / f"{cid}{suffix}",
                 one / "traces" / f"{cid}.champsim",
+                one / "traces" / "plain-o3.champsim",
             ):
                 path.unlink(missing_ok=True)
         cache[cid] = {
@@ -364,11 +371,9 @@ def main():
                     ]
                 )
 
-    # Config 0 is the shared reference and CARBS bootstrap configuration.
-    baseline_id = 0
-    if args.compare or args.algorithm == "carbs":
-        measure(0)
-    lut = OnlineLUT(len(flags), baseline_id, measure)
+    # Plain -O3 is measured alongside the first requested candidate, outside
+    # the search space. CARBS keeps its 0.5 probability prior and samples first.
+    lut = OnlineLUT(len(flags), None, measure)
     lut.names = flags
     sys.path.insert(0, str(Path(args.repo).resolve()))
     from flagbench import tuners
@@ -380,7 +385,11 @@ def main():
             for seed in range(args.seed, args.seed + args.seeds):
                 if name == "carbs":
                     trace, _ = tuners.carbs(
-                        lut, args.budget, seed, return_state=True
+                        lut,
+                        args.budget,
+                        seed,
+                        return_state=True,
+                        bootstrap=False,
                     )
                 elif name == "random":
                     trace = random_search_online(lut, args.budget, seed)
@@ -406,14 +415,16 @@ def main():
             "seed_start": args.seed,
             "measured_configurations": len(cache),
             "total_configurations": total,
-            "reference_config_id": baseline_id,
-            "o3_identity_verified": baseline_meta.get(
-                "o3_identity_verified", False
+            "carbs_initial_flag_probabilities": {name: 0.5 for name in flags},
+            "o3_identity_verified": (
+                meta.get("o3_identity_verified", False) if meta else False
             ),
+            "o3_baseline_cycles": (meta.get("o3_cycles") if meta else None),
             "algorithms": {},
         }
         fig, ax = plt.subplots(figsize=(7, 4.5))
         rng = np.random.default_rng(17)
+        o3_cycles = report["o3_baseline_cycles"]
         styles = {
             "carbs": ("o", "-"),
             "random": ("s", "--"),
@@ -462,6 +473,21 @@ def main():
             ax.fill_between(evaluation_axis, lows, highs, alpha=0.18)
             final = values[:, -1]
             final = final[np.isfinite(final)]
+            speedup_by_evaluation = []
+            final_speedups = []
+            if o3_cycles is not None:
+                speedup_values = float(o3_cycles) / values
+                for column in speedup_values.T:
+                    finite_speedups = column[np.isfinite(column)]
+                    speedup_by_evaluation.append(
+                        float(np.median(finite_speedups))
+                        if len(finite_speedups)
+                        else None
+                    )
+                final_speedups = speedup_values[:, -1]
+                final_speedups = final_speedups[
+                    np.isfinite(final_speedups)
+                ].tolist()
             report["algorithms"][name] = {
                 "median_best_cycles_by_evaluation": [
                     None if not np.isfinite(value) else float(value)
@@ -478,12 +504,26 @@ def main():
                 "final_median_best_cycles": (
                     float(np.median(final)) if len(final) else None
                 ),
+                "median_speedup_over_o3_by_evaluation": speedup_by_evaluation,
+                "final_median_speedup_over_o3": (
+                    float(np.median(final_speedups))
+                    if final_speedups
+                    else None
+                ),
                 "seeds_with_valid_measurements": int(len(final)),
                 "seed_traces": [
                     [None if not math.isfinite(x) else x for x in trace]
                     for trace in traces
                 ],
             }
+        if o3_cycles is not None:
+            ax.axhline(
+                float(o3_cycles),
+                color="black",
+                linestyle="-.",
+                linewidth=1.2,
+                label="plain -O3 baseline",
+            )
         ax.set(
             xlabel="tuner evaluations",
             ylabel="best cycles (lower is better)",
@@ -495,6 +535,77 @@ def main():
         fig.savefig(out / f"score_compare_{args.kernel}.png", dpi=140)
         plt.close(fig)
         (out / "comparison.json").write_text(json.dumps(report, indent=2))
+        if o3_cycles is not None:
+            speed_fig, speed_ax = plt.subplots(figsize=(7, 4.5))
+            speed_rng = np.random.default_rng(18)
+            for name, traces in all_traces.items():
+                values = np.asarray(
+                    [
+                        [
+                            (
+                                float(x)
+                                if x is not None and math.isfinite(x)
+                                else np.nan
+                            )
+                            for x in trace
+                        ]
+                        for trace in traces
+                    ],
+                    dtype=float,
+                )
+                speeds = np.divide(
+                    float(o3_cycles),
+                    values,
+                    out=np.full_like(values, np.nan),
+                    where=np.isfinite(values) & (values > 0),
+                )
+                medians, lows, highs = [], [], []
+                for column in speeds.T:
+                    finite = column[np.isfinite(column)]
+                    if not len(finite):
+                        medians.append(np.nan)
+                        lows.append(np.nan)
+                        highs.append(np.nan)
+                        continue
+                    medians.append(float(np.median(finite)))
+                    boot = np.median(
+                        speed_rng.choice(
+                            finite, size=(1000, len(finite)), replace=True
+                        ),
+                        axis=1,
+                    )
+                    lows.append(float(np.percentile(boot, 2.5)))
+                    highs.append(float(np.percentile(boot, 97.5)))
+                marker, linestyle = styles[name]
+                speed_ax.plot(
+                    evaluation_axis,
+                    medians,
+                    label=name,
+                    marker=marker,
+                    linestyle=linestyle,
+                    markevery=max(1, args.budget // 10),
+                    markersize=4,
+                )
+                speed_ax.fill_between(evaluation_axis, lows, highs, alpha=0.18)
+            speed_ax.axhline(
+                1.0,
+                color="black",
+                linestyle="-.",
+                linewidth=1.2,
+                label="plain -O3 baseline",
+            )
+            speed_ax.set(
+                xlabel="tuner evaluations",
+                ylabel="best speedup over plain -O3",
+                title=f"{args.kernel}: speedup over -O3 ({args.seeds} seeds)",
+            )
+            speed_ax.grid(True, alpha=0.25)
+            speed_ax.legend()
+            speed_fig.tight_layout()
+            speed_fig.savefig(
+                out / f"speedup_compare_{args.kernel}.png", dpi=140
+            )
+            plt.close(speed_fig)
         print(
             f"Comparison complete: {len(cache)} unique configurations measured "
             f"out of {total}. Results: {out}",
@@ -511,13 +622,20 @@ def main():
         lut,
         args.budget,
         args.seed,
-        **({"return_state": True} if args.algorithm == "carbs" else {}),
+        **(
+            {"return_state": True, "bootstrap": False}
+            if args.algorithm == "carbs"
+            else {}
+        ),
     )
     if args.algorithm == "carbs":
         trace, probabilities = result
     else:
         trace, probabilities = result, None
-    # Include the forced bootstrap measurement in history and write the current sparse LUT.
+    best = np.minimum.accumulate(
+        [x if x is not None else math.inf for x in trace]
+    )
+    # Write the online search history and current sparse LUT.
     (out / "carbs.json").write_text(
         json.dumps(
             {
@@ -533,9 +651,18 @@ def main():
                 ),
                 "evaluations": lut.evals,
                 "measured_config_ids": sorted(cache),
-                "baseline_config_id": lut.o3,
-                "o3_identity_verified": baseline_meta.get(
-                    "o3_identity_verified", False
+                "initial_flag_probabilities": {name: 0.5 for name in flags},
+                "o3_identity_verified": (
+                    meta.get("o3_identity_verified", False) if meta else False
+                ),
+                "o3_baseline_cycles": meta.get("o3_cycles") if meta else None,
+                "final_speedup_over_o3": (
+                    float(meta["o3_cycles"]) / best[-1]
+                    if meta
+                    and meta.get("o3_cycles") is not None
+                    and np.isfinite(best[-1])
+                    and best[-1] > 0
+                    else None
                 ),
             },
             indent=2,
@@ -543,13 +670,18 @@ def main():
     )
     write_sparse_csv()
     # Best-so-far progress plot; sparse measurements cannot support full-factorial analyses.
-    best = np.minimum.accumulate(
-        [x if x is not None else math.inf for x in trace]
-    )
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(
         np.arange(1, len(best) + 1), best, marker=".", label=args.algorithm
     )
+    if meta and meta.get("o3_cycles") is not None:
+        ax.axhline(
+            float(meta["o3_cycles"]),
+            color="black",
+            linestyle="-.",
+            linewidth=1.2,
+            label="plain -O3 baseline",
+        )
     ax.set(
         xlabel="tuner evaluations",
         ylabel="best cycles",
@@ -560,6 +692,37 @@ def main():
     fig.tight_layout()
     fig.savefig(out / f"score_{args.kernel}.png", dpi=140)
     plt.close(fig)
+    if meta and meta.get("o3_cycles") is not None:
+        speed_fig, speed_ax = plt.subplots(figsize=(6, 4))
+        speeds = np.divide(
+            float(meta["o3_cycles"]),
+            np.asarray(best, dtype=float),
+            out=np.full(len(best), np.nan),
+            where=np.isfinite(best) & (np.asarray(best) > 0),
+        )
+        speed_ax.plot(
+            np.arange(1, len(speeds) + 1),
+            speeds,
+            marker=".",
+            label=args.algorithm,
+        )
+        speed_ax.axhline(
+            1.0,
+            color="black",
+            linestyle="-.",
+            linewidth=1.2,
+            label="plain -O3 baseline",
+        )
+        speed_ax.set(
+            xlabel="tuner evaluations",
+            ylabel="best speedup over plain -O3",
+            title=f"{args.kernel}: speedup over -O3",
+        )
+        speed_ax.grid(True, alpha=0.25)
+        speed_ax.legend()
+        speed_fig.tight_layout()
+        speed_fig.savefig(out / f"speedup_{args.kernel}.png", dpi=140)
+        plt.close(speed_fig)
     print(
         f"Adaptive run complete. Unique configurations measured: {len(cache)} / {total}. Results: {out}"
     )
