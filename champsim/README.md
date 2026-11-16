@@ -52,8 +52,12 @@ for the shared graph evaluator.
 `run_carbs.py` and `run_windows.py` for exhaustive experiments, but asks the
 selected tuner for one configuration at a time and compiles, traces, and
 simulates only that configuration. The sampled measurements are cached, so a
-repeated request does not create another binary or trace. This lets you explore
-larger spaces without first materializing all `2^N` variants.
+repeated request does not create another binary or trace. Compiled reference
+baselines are reused, and configurations with the same `.text` hash reuse the
+recorded simulation. After each result is saved, the one-use binary and trace
+are deleted; only small logs, baselines, and the measurement cache remain. This
+lets you explore larger spaces without first materializing all `2^N` variants
+or retaining a trace for every evaluation.
 
 For example, use 20 flags and let CARBS request up to 100 evaluations:
 
@@ -78,7 +82,17 @@ the adaptive run only; sparse sampling does not provide exhaustive ground truth
 or support the full-factorial CARBS-versus-random comparison produced by
 `run_windows.py`. Increase `--budget` to spend more compilation and simulation
 time. The per-request backend currently starts the legacy runner, so a large
-budget has some process-startup overhead.
+budget has some process-startup overhead. Set `--determinism 1` to rerun each
+requested trace once and require identical cycle counts before accepting it.
+Each adaptive configuration also has a 900-second simulator timeout by
+default; timed-out configurations are recorded as invalid and the search
+continues. Adjust this with `--simulation-timeout` if a valid long trace needs
+more time. The legacy exhaustive runner leaves timeouts disabled unless that
+option is passed directly. Windows skips the first 1,000 PIN instructions by
+default, matching the one-command Windows workflow. `carbs.json` records
+whether the selected flag space's `-O3` identity was verified. If it was not,
+CARBS uses configuration 0 as its bootstrap measurement, matching the legacy
+runner's documented fallback.
 
 ### Kernels
 

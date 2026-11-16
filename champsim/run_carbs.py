@@ -28,6 +28,39 @@ def command(args, **kwargs):
     return subprocess.run(args, check=True, text=True, **kwargs)
 
 
+def run_with_timeout(args, timeout, **kwargs):
+    """Run a process with a timeout and kill its full Windows process tree."""
+    if kwargs.pop("capture_output", False):
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
+    process = subprocess.Popen(args, **kwargs)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            killer = subprocess.run(
+                ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if killer.returncode:
+                process.kill()
+        else:
+            process.kill()
+        try:
+            process.kill()
+        except OSError:
+            pass
+        process.wait()
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+        return None
+    return subprocess.CompletedProcess(
+        args, process.returncode, stdout, stderr
+    )
+
+
 def executable(root, name):
     candidates = [os.path.join(root, name)]
     if os.name == "nt":
@@ -187,6 +220,15 @@ def main():
         help="compile and simulate only these configuration IDs (used by adaptive runners)",
     )
     parser.add_argument(
+        "--reuse-baseline",
+        action="store_true",
+        help="reuse existing reference and plain -O3 binaries (adaptive runner)",
+    )
+    parser.add_argument(
+        "--known-hash-results",
+        help="JSON binary-hash to statistics cache for adaptive runs",
+    )
+    parser.add_argument(
         "--compiler",
         choices=("wsl-mingw", "clang"),
         default="wsl-mingw",
@@ -208,6 +250,12 @@ def main():
     )
     parser.add_argument("--warmup-instructions", type=int, default=100_000)
     parser.add_argument(
+        "--simulation-timeout",
+        type=int,
+        default=0,
+        help="maximum seconds for each ChampSim run (0 disables the timeout)",
+    )
+    parser.add_argument(
         "--determinism",
         type=int,
         default=0,
@@ -224,6 +272,8 @@ def main():
         help="regenerate every trace and simulation, even when cached results exist",
     )
     args = parser.parse_args()
+    if args.simulation_timeout < 0:
+        parser.error("--simulation-timeout cannot be negative")
     try:
         flags = select(args.nflags, args.flags)
     except ValueError as error:
@@ -314,33 +364,45 @@ def main():
         out, "reference.exe" if os.name == "nt" else "reference"
     )
     reference_log = os.path.join(out, "compile-logs", "reference.log")
-    with open(reference_log, "w") as log:
-        result = compiler_run(
-            [
-                compiler,
-                "-O0",
-                "-DNO_M5OPS",
-                "-I",
-                os.path.join(repo, "include"),
-                "-static",
-                reference_source,
-                "-o",
-                reference_binary,
-            ],
-            text=True,
-            stdout=log,
-            stderr=log,
-        )
-    if result.returncode:
-        raise SystemExit("Reference compilation failed; see " + reference_log)
+    if not (
+        args.reuse_baseline
+        and os.path.isfile(reference_binary)
+        and os.path.getsize(reference_binary) > 0
+    ):
+        with open(reference_log, "w") as log:
+            result = compiler_run(
+                [
+                    compiler,
+                    "-O0",
+                    "-DNO_M5OPS",
+                    "-I",
+                    os.path.join(repo, "include"),
+                    "-static",
+                    reference_source,
+                    "-o",
+                    reference_binary,
+                ],
+                text=True,
+                stdout=log,
+                stderr=log,
+            )
+        if result.returncode:
+            raise SystemExit(
+                "Reference compilation failed; see " + reference_log
+            )
     reference_checksum = checksum(reference_binary)
     o3_binary = os.path.join(
         out, "plain-o3.exe" if os.name == "nt" else "plain-o3"
     )
     o3_log = os.path.join(out, "compile-logs", "plain-o3.log")
-    result = compile_binary(o3_binary, "-O3", [], o3_log)
-    if result.returncode:
-        raise SystemExit("Plain -O3 compilation failed; see " + o3_log)
+    if not (
+        args.reuse_baseline
+        and os.path.isfile(o3_binary)
+        and os.path.getsize(o3_binary) > 0
+    ):
+        result = compile_binary(o3_binary, "-O3", [], o3_log)
+        if result.returncode:
+            raise SystemExit("Plain -O3 compilation failed; see " + o3_log)
     o3_hash = text_hash(o3_binary, objcopy, hash_dir)
 
     total_configs = 1 << len(flags)
@@ -357,7 +419,7 @@ def main():
             f"Configuration IDs must be in [0, {total_configs - 1}]: {invalid_ids}"
         )
     print(
-        f"=== Compiling {total_configs} flag configurations ({args.jobs} jobs) ===",
+        f"=== Compiling {len(config_ids)} requested of {total_configs} flag configurations ({args.jobs} jobs) ===",
         flush=True,
     )
 
@@ -415,13 +477,29 @@ def main():
         if binary_hash not in unique_binaries:
             unique_binaries[binary_hash] = (config_id, binary)
 
+    results_by_hash = {}
+    if args.known_hash_results:
+        with open(args.known_hash_results, encoding="utf-8") as stream:
+            known_hash_results = json.load(stream)
+        results_by_hash = {
+            binary_hash: (
+                float(stats["cycles"]),
+                float(stats["instructions"]),
+                float(stats["ipc"]),
+            )
+            for binary_hash, stats in known_hash_results.items()
+        }
+
     total_unique = len(unique_binaries)
     print(
-        f"  Found {total_unique} unique binaries out of {total_configs} configurations.",
+        f"  Found {total_unique} unique binaries among {len(config_info)} requested configurations.",
         flush=True,
     )
+    pending_unique = sum(
+        binary_hash not in results_by_hash for binary_hash in unique_binaries
+    )
     print(
-        f"=== Simulating {total_unique} unique binaries in parallel ({args.jobs} workers) ===",
+        f"=== Simulating {pending_unique} new unique binaries ({args.jobs} workers) ===",
         flush=True,
     )
 
@@ -549,7 +627,7 @@ def main():
                 )
                 return None
             with open(sim_log, "w") as log:
-                result = subprocess.run(
+                result = run_with_timeout(
                     [
                         simulator,
                         "--warmup-instructions",
@@ -558,10 +636,18 @@ def main():
                         str(args.trace_instructions),
                         trace,
                     ],
+                    args.simulation_timeout or None,
                     text=True,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                 )
+            if result is None:
+                print(
+                    f"  WARNING: ChampSim timed out for config {cid} after "
+                    f"{args.simulation_timeout} seconds; skipping",
+                    flush=True,
+                )
+                return None
             if result.returncode == 0:
                 break
             if attempt == 4:
@@ -619,13 +705,13 @@ def main():
             return None
         return b_hash, cyc, ins, ipc_val
 
-    results_by_hash = {}
     completed_sims = 0
     skipped_sims = 0
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         futures = {
             executor.submit(simulate_one_unique, item): item
             for item in unique_binaries.items()
+            if item[0] not in results_by_hash
         }
         for f in as_completed(futures):
             result = f.result()
@@ -708,7 +794,7 @@ def main():
             )
             if not os.path.exists(trace):
                 continue
-            result = subprocess.run(
+            result = run_with_timeout(
                 [
                     simulator,
                     "--warmup-instructions",
@@ -717,11 +803,18 @@ def main():
                     str(args.trace_instructions),
                     trace,
                 ],
+                args.simulation_timeout or None,
                 capture_output=True,
                 text=True,
             )
-            rerun = stat(result.stdout, "cycles")
-            if result.returncode or rerun != record["cycles"]:
+            rerun = (
+                stat(result.stdout, "cycles") if result is not None else None
+            )
+            if (
+                result is None
+                or result.returncode
+                or rerun != record["cycles"]
+            ):
                 raise SystemExit(
                     "DETERMINISM CHECK FAILED for " + record["binary_hash"]
                 )
