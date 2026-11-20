@@ -19,6 +19,7 @@
 
 #include <bzlib.h>
 #include <cassert>
+#include <fstream>
 #include <iostream>
 #include <lzma.h>
 #include <memory>
@@ -228,7 +229,7 @@ struct inf_istream {
   [[nodiscard]] bool eof() const { return eof_; }
   [[nodiscard]] std::streamsize gcount() const { return gcount_; }
 
-  explicit inf_istream(std::string s) : underlying(std::make_unique<StreamType>(s)) {}
+  explicit inf_istream(std::string s) : underlying(std::make_unique<StreamType>(s, std::ios::in | std::ios::binary)) {}
   explicit inf_istream(StreamType&& str) : underlying(std::make_unique<StreamType>(std::move(str))) {}
 };
 

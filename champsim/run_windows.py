@@ -61,35 +61,12 @@ def find_pin(explicit):
     )
 
 
-def build(pin, make):
+def build(pin, make, config=None):
     if not make:
         return
-    subprocess.run(
-        [
-            sys.executable,
-            str(UPSTREAM / "config.sh"),
-            str(CHAMPSIM / "champsim_config.json"),
-        ],
-        cwd=UPSTREAM,
-        check=True,
-    )
-    make_path = command_path("make", "GNU Make")
-    subprocess.run(
-        [
-            str(make_path),
-            "CXX=clang++",
-            "CC=clang",
-            "CXXFLAGS=-Wno-c++11-narrowing -fms-runtime-lib=dll",
-            "LDLIBS=-lshell32",
-        ],
-        cwd=UPSTREAM,
-        check=True,
-    )
-    subprocess.run(
-        [str(make_path), f"PIN_ROOT={pin}"],
-        cwd=UPSTREAM / "tracer" / "pin",
-        check=True,
-    )
+    from build_windows import build_native
+
+    build_native(UPSTREAM, pin, config=config)
 
 
 def run_stage(label, args, cwd=None, env=None):
@@ -183,6 +160,7 @@ def main():
         action="store_true",
         help="configure and rebuild ChampSim and the PIN tracer, then exit",
     )
+    parser.add_argument("--build-config", type=Path, help="alternate ChampSim JSON used for a --build-only run")
     parser.add_argument(
         "--force-trace",
         action="store_true",
@@ -221,7 +199,9 @@ def main():
     command_path("llvm-objcopy", "LLVM objcopy")
 
     pin = find_pin(args.pin)
-    build(pin, args.build or args.build_only)
+    if args.build_config and not args.build_only:
+        parser.error("--build-config requires --build-only")
+    build(pin, args.build or args.build_only, args.build_config.resolve() if args.build_config else None)
     if args.build_only:
         return
     if not SIMULATOR.is_file():

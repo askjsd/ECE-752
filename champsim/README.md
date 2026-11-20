@@ -1,5 +1,8 @@
 # ChampSim FlagBench workflow
 
+The local ISCA 2021 Entangling L1I prefetcher port, reference code, build command,
+and validation details are described in [ENTANGLING_PORT.md](ENTANGLING_PORT.md).
+
 This is a separate x86 trace-driven version of FlagBench. It does not reuse
 gem5 outputs or the RISC-V binaries.
 
@@ -22,6 +25,9 @@ ChampSim is trace-driven, so it models the pipeline and memory hierarchy after
 the x86 binary has been traced. It does not execute the ELF directly like gem5.
 
 ## Windows setup for adaptive simulation
+
+For native Windows prerequisites, rebuild instructions, and a verified baseline,
+see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
 
 Use the adaptive workflow below for experiments and comparisons. `run_windows.py`
 is a legacy full-space runner; it compiles every selected flag configuration

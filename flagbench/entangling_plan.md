@@ -1,5 +1,9 @@
 # Entangling instruction prefetcher: integration and tuning plan
 
+Update, 2026-11-20: an ISCA 2021 baseline has been ported to the separate native
+Windows ChampSim workflow; see [the port and validation notes](../champsim/ENTANGLING_PORT.md).
+The gem5 integration and runtime tuning proposed below remain separate work.
+
 Status: proposed work, not implemented by this document. Repository inspected on
 2026-11-06 at `7f630d979fb7df4ba5322a6b3ed9c96d8f0c3851`.
 
