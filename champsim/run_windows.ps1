@@ -22,7 +22,7 @@ $evaluationBudgetValues = @($EvaluationBudgets -split "," | ForEach-Object {
     })
 $champsimDir = (Get-Item $PSScriptRoot).FullName
 $repo = (Get-Item (Join-Path $champsimDir "..")).FullName
-$upstream = Join-Path $champsimDir ".upstream-windows"
+$upstream = Join-Path $champsimDir "champsim-source"
 $tracerDir = Join-Path $upstream "tracer\pin"
 $tracer = Join-Path $tracerDir "obj-intel64\champsim_tracer.dll"
 $simulator = Join-Path $upstream "bin\champsim.exe"

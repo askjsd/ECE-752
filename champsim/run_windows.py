@@ -21,7 +21,7 @@ from portable_flags import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CHAMPSIM = Path(__file__).resolve().parent
-UPSTREAM = CHAMPSIM / ".upstream-windows"
+UPSTREAM = CHAMPSIM / "champsim-source"
 TRACER = UPSTREAM / "tracer" / "pin" / "obj-intel64" / "champsim_tracer.dll"
 SIMULATOR = UPSTREAM / "bin" / "champsim.exe"
 DEFAULT_BUDGETS = (10, 20, 50, 100, 200)

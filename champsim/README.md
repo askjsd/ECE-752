@@ -56,9 +56,9 @@ For example, use 20 flags and let CARBS request up to 100 evaluations:
 ```powershell
 python .\champsim\run_carbs_adaptive.py `
   --repo . `
-  --champsim-root .\champsim\.upstream-windows `
+  --champsim-root .\champsim\champsim-source `
   --pin C:\path\to\pin `
-  --tracer .\champsim\.upstream-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --tracer .\champsim\champsim-source\tracer\pin\obj-intel64\champsim_tracer.dll `
   --out .\champsim\results\adaptive-k-mix2 `
   --kernel k_mix2 `
   --nflags 20 `
@@ -123,9 +123,9 @@ are reused:
 ```powershell
 python .\champsim\run_carbs_adaptive.py `
   --repo . `
-  --champsim-root .\champsim\.upstream-windows `
+  --champsim-root .\champsim\champsim-source `
   --pin C:\path\to\pin `
-  --tracer .\champsim\.upstream-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --tracer .\champsim\champsim-source\tracer\pin\obj-intel64\champsim_tracer.dll `
   --out .\champsim\results\compare-k-mix2-24flag `
   --kernel k_mix2 `
   --nflags 24 `
@@ -167,9 +167,9 @@ cross-machine performance claim:
 ```powershell
 python .\champsim\run_carbs_adaptive.py `
   --repo . `
-  --champsim-root .\champsim\.upstream-windows `
+  --champsim-root .\champsim\champsim-source `
   --pin C:\path\to\pin `
-  --tracer .\champsim\.upstream-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --tracer .\champsim\champsim-source\tracer\pin\obj-intel64\champsim_tracer.dll `
   --out .\champsim\results\compare-k-optstress `
   --kernel k_optstress `
   --nflags 4 `
@@ -252,7 +252,7 @@ directory if you want to resume or inspect per-configuration results.
 - GNU Make, only when using `--build`
 - Intel PIN for Windows, with `pin.exe`
 - ChampSim's vcpkg runtime DLLs under
-  `champsim\.upstream-windows\vcpkg_installed\x64-windows\bin`
+  `champsim\champsim-source\vcpkg_installed\x64-windows\bin`
 
 The script automatically adds the standard LLVM installation directory and
 finds the newest `pin-external-*-windows` directory under `Downloads`.
