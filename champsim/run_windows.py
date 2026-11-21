@@ -73,6 +73,8 @@ def build(pin, make):
         cwd=UPSTREAM,
         check=True,
     )
+    # This generated file can retain absolute paths from a copied build tree.
+    (UPSTREAM / "absolute.options").unlink(missing_ok=True)
     make_path = command_path("make", "GNU Make")
     subprocess.run(
         [
