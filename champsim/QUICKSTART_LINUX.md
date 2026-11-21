@@ -169,6 +169,10 @@ Drop `--compare` and pick one algorithm:
 | `k_stencil`, `k_reduce`, `k_helper` | Moderate flag sensitivity. |
 | `k_crc32`, `k_branchy` | Low sensitivity. |
 | `k_ptrchase` | Control case. It is memory-bound, so flags barely matter. |
+| `k_hoist_iv` | Fixed-point grid filter; loop-invariant motion, GCSE, IVOPTS, and predictive commoning. |
+| `k_slp_unroll` | Tuple math and an 8-tap FIR; SLP vectorization and unrolling. |
+| `k_epistasis_pipe` | Helper-heavy pipeline; inlining, IPA-CP, loop splitting, unswitching, and vectorization. |
+| `k_multistage_gemm` | Tiled GEMM, histogram, and transpose; loop distribution, unrolling, and vectorization. |
 
 ## What you get
 
@@ -197,6 +201,10 @@ your budget. A finished example is in
 | `k_stencil`, `k_reduce`, `k_helper` | Moderate flag sensitivity. |
 | `k_crc32`, `k_branchy` | Low sensitivity. |
 | `k_ptrchase` | Control case. It is memory-bound, so flags barely matter. |
+| `k_hoist_iv` | Fixed-point grid filter; loop-invariant motion, GCSE, IVOPTS, and predictive commoning. |
+| `k_slp_unroll` | Tuple math and an 8-tap FIR; SLP vectorization and unrolling. |
+| `k_epistasis_pipe` | Helper-heavy pipeline; inlining, IPA-CP, loop splitting, unswitching, and vectorization. |
+| `k_multistage_gemm` | Tiled GEMM, histogram, and transpose; loop distribution, unrolling, and vectorization. |
 
 ## What you get
 

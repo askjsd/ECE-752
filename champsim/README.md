@@ -155,6 +155,10 @@ sampling noise; 10k was too short to complete reliably in an earlier run.
 | `k_helper` | Hot helper calls | Moderate: inline + IPA |
 | `k_mix2` | 10-phase flag-stress kernel | **High**: stencil, reduce, CRC, helper, interchange, stride, FP matmul, IPA stress — opposing flag preferences produce the widest cycle range |
 | `k_optstress` | Repeated independent floating-point array updates | **High for vectorization flags**: designed to expose loop and SLP vectorization differences |
+| `k_hoist_iv` | Fixed-point 2D grid filter | Smooth sensitivity to loop-invariant motion, GCSE, IVOPTS, and predictive commoning |
+| `k_slp_unroll` | Four-channel tuple updates plus an 8-tap FIR | Smooth sensitivity to SLP vectorization and loop unrolling |
+| `k_epistasis_pipe` | Helper-heavy, multi-pass floating-point pipeline | High-order interactions among inlining, IPA-CP, loop splitting, unswitching, and vectorization |
+| `k_multistage_gemm` | Tiled GEMM with an indirect histogram and transpose mix | High-order interactions among loop distribution, unrolling, and vectorization |
 
 `k_optstress` isolates compiler-flag sensitivity in one hot loop and is the
 recommended first check when validating whether vectorization settings change
