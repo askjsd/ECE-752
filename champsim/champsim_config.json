@@ -51,7 +51,7 @@
     "latency": 2,
     "max_tag_check": 2,
     "max_fill": 2,
-    "prefetcher": "ip_stride"
+    "prefetcher": "tage"
   },
   "L2C": {
     "sets": 512,
@@ -63,7 +63,7 @@
     "latency": 10,
     "max_tag_check": 1,
     "max_fill": 1,
-    "prefetcher": "no"
+    "prefetcher": "tage"
   },
   "LLC": {
     "frequency": 2000,
