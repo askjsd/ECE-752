@@ -1,0 +1,11 @@
+trace,carbs,random,hillclimb,default_hint,best_found,best_config
+602.gcc_s-734B,1.655,1.63,1.649,1.46,1.661,"source=nextline,trigger=access,level=3,fill=l2,throttle=0,confirm=1,fallback=0,insert=mru"
+605.mcf_s-1536B,1.88,1.301,1.883,0.999,1.883,"source=nextline,trigger=tagged,level=1,fill=low,throttle=0,confirm=1,fallback=0,insert=mru"
+605.mcf_s-1554B,2.114,1.704,1.745,1.065,2.117,"source=markov,trigger=access,level=6,fill=high,throttle=0,confirm=1,fallback=1,insert=lru"
+619.lbm_s-2676B,1.063,1.079,1.075,1.0,1.082,"source=nextline,trigger=access,level=6,fill=l2,throttle=1,confirm=1,fallback=0,insert=lru"
+619.lbm_s-4268B,1.058,1.074,1.071,1.0,1.076,"source=nextline,trigger=access,level=6,fill=l2,throttle=1,confirm=1,fallback=0,insert=lru"
+620.omnetpp_s-141B,1.004,1.004,1.003,1.003,1.005,"source=markov,trigger=tagged,level=5,fill=low,throttle=1,confirm=1,fallback=0,insert=lru"
+620.omnetpp_s-874B,1.012,1.01,1.006,1.006,1.014,"source=markov,trigger=tagged,level=1,fill=low,throttle=0,confirm=1,fallback=1,insert=lru"
+623.xalancbmk_s-165B,2.128,2.316,2.323,1.244,2.414,"source=nextline,trigger=tagged,level=3,fill=l1d,throttle=0,confirm=1,fallback=0,insert=mru"
+649.fotonik3d_s-1176B,1.934,1.922,1.95,1.841,1.95,"source=nextline,trigger=access,level=2,fill=low,throttle=0,confirm=1,fallback=0,insert=mru"
+654.roms_s-294B,1.425,1.407,1.393,1.358,1.426,"source=markov,trigger=tagged,level=0,fill=high,throttle=0,confirm=2,fallback=1,insert=mru"

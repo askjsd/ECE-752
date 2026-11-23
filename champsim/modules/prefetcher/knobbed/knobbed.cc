@@ -23,9 +23,6 @@ namespace knobbed_pf
 {
 namespace
 {
-// Map a threshold in [0,1] to the 3-bit field used in the packed hint word.
-uint32_t quantize(double v) { return static_cast<uint32_t>(std::lround(std::clamp(v, 0.0, 1.0) * 7.0)); }
-
 // Remove leading and trailing whitespace.
 std::string trim(std::string s)
 {
@@ -33,41 +30,50 @@ std::string trim(std::string s)
   const auto e = s.find_last_not_of(" \t\r\n");
   return b == std::string::npos ? std::string{} : s.substr(b, e - b + 1);
 }
+
+bool is_on(const std::string& v) { return v == "1" || v == "on" || v == "true"; }
+
+// Aggressiveness ladders, gentlest first (distance, degree). Indexed by level.
+constexpr rung STRIDE_LADDER[LADDER_LEVELS] = {{1, 1}, {1, 2}, {1, 4}, {1, 8}, {2, 4}, {4, 4}, {4, 8}, {8, 8}};
+constexpr rung MARKOV_LADDER[LADDER_LEVELS] = {{1, 1}, {1, 2}, {1, 4}, {1, 8}, {2, 2}, {2, 4}, {2, 8}, {4, 4}};
 } // namespace
 
+const rung& ladder_rung(stride_source source, int level)
+{
+  const auto i = static_cast<std::size_t>(std::clamp(level, 0, LADDER_LEVELS - 1));
+  return source == stride_source::MARKOV ? MARKOV_LADDER[i] : STRIDE_LADDER[i];
+}
+
 // Pack the hint into the 32-bit control word (layout documented in knobbed.h).
-// Distance, degree, confirm and the thresholds are clamped/quantized to the
-// bit widths the word has room for.
 uint32_t hint::to_word() const
 {
   uint32_t w = 0;
-  w |= (enable ? 1u : 0u);
-  w |= (static_cast<uint32_t>(trigger) & 0x3u) << 1;
-  w |= (static_cast<uint32_t>(source) & 0x1u) << 3;
-  w |= (std::min<uint32_t>(distance, 31) & 0x1Fu) << 4;
-  w |= ((std::clamp<uint32_t>(degree, 1, 8) - 1) & 0x7u) << 9; // stored as degree-1
-  w |= (quantize(fill_thresh) & 0x7u) << 12;
-  w |= (quantize(drop_thresh) & 0x7u) << 15;
-  w |= (static_cast<uint32_t>(insertion) & 0x3u) << 18;
-  w |= (throttle ? 1u : 0u) << 20;
-  w |= ((std::clamp<uint32_t>(confirm, 1, 4) - 1) & 0x3u) << 21; // stored as confirm-1
+  w |= (static_cast<uint32_t>(source) & 0x3u);
+  w |= (static_cast<uint32_t>(trigger) & 0x3u) << 2;
+  w |= ((std::clamp<uint32_t>(confirm, 1, 2) - 1) & 0x1u) << 4; // stored as confirm-1
+  w |= (std::min<uint32_t>(level, LADDER_LEVELS - 1) & 0x7u) << 5;
+  w |= (static_cast<uint32_t>(fill) & 0x3u) << 8;
+  w |= (throttle ? 1u : 0u) << 10;
+  w |= (fallback ? 1u : 0u) << 11;
   return w;
 }
 
-// Inverse of to_word(). Thresholds come back quantized to multiples of 1/7.
+// A word is valid if every field holds a defined value. Source, fill, level and
+// confirm use all of their codes; only trigger has an unused code (3). Accepting
+// it would make it an alias of another trigger and skew a search over raw bits.
+bool hint::word_valid(uint32_t w) { return ((w >> 2) & 0x3u) <= static_cast<uint32_t>(trigger_mode::ACCESS); }
+
+// Inverse of to_word().
 hint hint::from_word(uint32_t w)
 {
   hint h;
-  h.enable = w & 1u;
-  h.trigger = static_cast<trigger_mode>((w >> 1) & 0x3u);
-  h.source = static_cast<stride_source>((w >> 3) & 0x1u);
-  h.distance = (w >> 4) & 0x1Fu;
-  h.degree = static_cast<uint8_t>(((w >> 9) & 0x7u) + 1);
-  h.fill_thresh = static_cast<double>((w >> 12) & 0x7u) / 7.0;
-  h.drop_thresh = static_cast<double>((w >> 15) & 0x7u) / 7.0;
-  h.insertion = static_cast<insertion_pos>((w >> 18) & 0x3u);
-  h.throttle = (w >> 20) & 1u;
-  h.confirm = static_cast<uint8_t>(((w >> 21) & 0x3u) + 1);
+  h.source = static_cast<stride_source>(w & 0x3u);
+  h.trigger = static_cast<trigger_mode>((w >> 2) & 0x3u);
+  h.confirm = static_cast<uint8_t>(((w >> 4) & 0x1u) + 1);
+  h.level = static_cast<uint8_t>((w >> 5) & 0x7u);
+  h.fill = static_cast<fill_policy>((w >> 8) & 0x3u);
+  h.throttle = (w >> 10) & 1u;
+  h.fallback = (w >> 11) & 1u;
   return h;
 }
 
@@ -92,11 +98,20 @@ bool hint::apply(const std::string& spec, std::string* error)
       return fail("expected key=value: " + item);
     const auto k = trim(item.substr(0, eq));
     const auto v = trim(item.substr(eq + 1));
-    // std::stoi/stod throw on malformed numbers; that is caught below.
+    // std::stoi throws on malformed numbers; that is caught below.
     try {
-      if (k == "enable")
-        enable = (v == "1" || v == "on" || v == "true");
-      else if (k == "trigger") {
+      if (k == "source") {
+        if (v == "off")
+          source = stride_source::OFF;
+        else if (v == "nextline")
+          source = stride_source::NEXT_LINE;
+        else if (v == "stride")
+          source = stride_source::PER_PC;
+        else if (v == "markov")
+          source = stride_source::MARKOV;
+        else
+          return fail("source must be off|nextline|stride|markov");
+      } else if (k == "trigger") {
         if (v == "miss")
           trigger = trigger_mode::MISS;
         else if (v == "tagged")
@@ -105,37 +120,37 @@ bool hint::apply(const std::string& spec, std::string* error)
           trigger = trigger_mode::ACCESS;
         else
           return fail("trigger must be miss|tagged|access");
-      } else if (k == "source") {
-        if (v == "nextline")
-          source = stride_source::NEXT_LINE;
-        else if (v == "stride")
-          source = stride_source::PER_PC;
+      } else if (k == "confirm") {
+        const int n = std::stoi(v);
+        if (n < 1 || n > 2)
+          return fail("confirm must be 1 or 2");
+        confirm = static_cast<uint8_t>(n);
+      } else if (k == "level") {
+        const int n = std::stoi(v);
+        if (n < 0 || n >= LADDER_LEVELS)
+          return fail("level must be 0-7");
+        level = static_cast<uint8_t>(n);
+      } else if (k == "fill") {
+        if (v == "l1d")
+          fill = fill_policy::ALWAYS_L1D;
+        else if (v == "low")
+          fill = fill_policy::GATED_LOW;
+        else if (v == "high")
+          fill = fill_policy::GATED_HIGH;
+        else if (v == "l2")
+          fill = fill_policy::ALWAYS_L2;
         else
-          return fail("source must be nextline|stride");
-      } else if (k == "confirm")
-        confirm = static_cast<uint8_t>(std::clamp(std::stoi(v), 1, 4));
-      else if (k == "distance")
-        distance = static_cast<uint8_t>(std::clamp(std::stoi(v), 1, 31));
-      else if (k == "degree")
-        degree = static_cast<uint8_t>(std::clamp(std::stoi(v), 1, 8));
-      else if (k == "fill")
-        fill_thresh = std::clamp(std::stod(v), 0.0, 1.0);
-      else if (k == "drop")
-        drop_thresh = std::clamp(std::stod(v), 0.0, 1.0);
-      else if (k == "insert") {
-        if (v == "mru")
-          insertion = insertion_pos::MRU;
-        else if (v == "mid")
-          insertion = insertion_pos::MID;
-        else if (v == "lru")
-          insertion = insertion_pos::LRU;
-        else
-          return fail("insert must be mru|mid|lru");
+          return fail("fill must be l1d|low|high|l2");
       } else if (k == "throttle")
-        throttle = (v == "1" || v == "on" || v == "true");
-      else if (k == "word") // a whole packed control word, e.g. word=0x30c21b
-        *this = from_word(static_cast<uint32_t>(std::stoul(v, nullptr, 0)));
-      else
+        throttle = is_on(v);
+      else if (k == "fallback")
+        fallback = is_on(v);
+      else if (k == "word") { // a whole packed control word, e.g. word=0x4a5
+        const auto w = static_cast<uint32_t>(std::stoul(v, nullptr, 0));
+        if (!word_valid(w))
+          return fail("word has an undefined field (trigger 3): " + v);
+        *this = from_word(w);
+      } else
         return fail("unknown knob: " + k);
     } catch (const std::exception&) {
       return fail("bad value for " + k + ": " + v);
@@ -145,6 +160,7 @@ bool hint::apply(const std::string& spec, std::string* error)
 }
 } // namespace knobbed_pf
 
+using knobbed_pf::fill_policy;
 using knobbed_pf::hint;
 using knobbed_pf::region;
 using knobbed_pf::stride_source;
@@ -155,7 +171,7 @@ using knobbed_pf::trigger_mode;
 //
 // ChampSim's module interface has no place for per-run parameters, so settings
 // come from the environment:
-//   KNOBBED_HINT="distance=4,degree=2,trigger=tagged,source=stride,throttle=0"
+//   KNOBBED_HINT="source=stride,trigger=tagged,level=3,fill=low,throttle=0"
 //       the default hint, used wherever no region matches
 //   KNOBBED_REGIONS=<file>
 //       one region per line:  <start> <end> <key=value,...>
@@ -206,9 +222,15 @@ void knobbed::prefetcher_initialize()
   regions.emplace_back(); // default region covers every address
   load_environment();
   const auto& h = regions[0].configured;
-  std::printf("[knobbed %s] default hint: word=%#x enable=%d trigger=%d source=%d confirm=%d distance=%d degree=%d fill=%.2f drop=%.2f throttle=%d regions=%zu\n",
-              intern_->NAME.c_str(), h.to_word(), h.enable, static_cast<int>(h.trigger), static_cast<int>(h.source), h.confirm, h.distance, h.degree,
-              h.fill_thresh, h.drop_thresh, h.throttle, regions.size() - 1);
+  std::printf("[knobbed %s] default hint: word=%#x source=%d trigger=%d confirm=%d level=%d (distance=%d degree=%d) fill=%d throttle=%d fallback=%d regions=%zu\n",
+              intern_->NAME.c_str(), h.to_word(), static_cast<int>(h.source), static_cast<int>(h.trigger), h.confirm, h.level, h.distance(), h.degree(),
+              static_cast<int>(h.fill), h.throttle, h.fallback, regions.size() - 1);
+  // Fixed (never tuned) constants, printed so every result can be tied to them.
+  std::printf("[knobbed %s] fixed constants: epoch=%llu min_issued=%llu acc_floor=%.2f acc_low=%.2f acc_high=%.2f early_high=%.2f suspend_epochs=%u "
+              "acc_ewma_start=1.0 gate_low=%.2f gate_high=%.2f table_sets=%zu table_ways=%zu pending_max=%zu track_max=%zu markov_max=%zu inflight_expire=%llu lower_expire=%llu\n",
+              intern_->NAME.c_str(), static_cast<unsigned long long>(tp.epoch_accesses), static_cast<unsigned long long>(tp.min_issued), tp.acc_floor, tp.acc_low,
+              tp.acc_high, tp.early_high, tp.suspend_epochs, knobbed_pf::GATED_LOW_THRESHOLD, knobbed_pf::GATED_HIGH_THRESHOLD, TRACKER_SETS, TRACKER_WAYS,
+              PENDING_MAX, TRACK_MAX, MARKOV_MAX, static_cast<unsigned long long>(INFLIGHT_EXPIRE), static_cast<unsigned long long>(LOWER_EXPIRE));
 }
 
 // Add a region covering byte addresses [start, end) and return its index.
@@ -247,10 +269,10 @@ std::size_t knobbed::find_region(uint64_t a) const
 // lecture slides choose the fill level from C (P7:9-10). Here:
 //   C = (how well-confirmed the stride is) x (the region's recent accuracy)
 // The stride term runs from 0.25 (just seen) to 1.0 (confirmed three times);
-// next-line has no stride to confirm, so that term is 1.
+// next-line and markov have no stride to confirm, so that term is 1.
 double knobbed::confidence(const region& r, int stride_conf) const
 {
-  const double stride_c = r.active.source == stride_source::NEXT_LINE ? 1.0 : std::min(1.0, static_cast<double>(stride_conf + 1) / 4.0);
+  const double stride_c = r.active.source != stride_source::PER_PC ? 1.0 : std::min(1.0, static_cast<double>(stride_conf + 1) / 4.0);
   return stride_c * r.acc_ewma;
 }
 
@@ -289,30 +311,30 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
   // of the demand address that found it.
   if (useful_prefetch) {
     // Demand hit a block a prefetch brought in: a timely prefetch.
-    if (auto it = resident.find(blk); it != resident.end()) {
-      auto& owner = regions[it->second.region_idx];
+    if (const auto* t = resident.find(blk)) {
+      auto& owner = regions[t->region_idx];
       ++owner.epoch.useful_timely;
       ++owner.total.useful_timely;
-      resident.erase(it); // counted once: the prefetch bit is cleared on first use
+      resident.erase(blk); // counted once: the prefetch bit is cleared on first use
     }
   }
   if (!cache_hit) {
     ++reg.epoch.demand_misses;
     ++reg.total.demand_misses;
-    if (auto lo = lower_tracked.find(blk); lo != lower_tracked.end()) {
+    if (const auto* lo = lower_tracked.find(blk)) {
       // We prefetched this into a lower level only, and the core did want it.
       // It will hit in the lower level instead of going to memory.
-      auto& owner = regions[lo->second.region_idx];
+      auto& owner = regions[lo->region_idx];
       ++owner.epoch.useful_lower;
       ++owner.total.useful_lower;
-      lower_tracked.erase(lo);
-    } else if (auto it = inflight.find(blk); it != inflight.end()) {
+      lower_tracked.erase(blk);
+    } else if (const auto* it = inflight.find(blk)) {
       // Demand missed while the prefetch for it was still in flight: the
       // prefetch was useful but late (an MSHR hit on a prefetch).
-      auto& owner = regions[it->second.region_idx];
+      auto& owner = regions[it->region_idx];
       ++owner.epoch.useful_late;
       ++owner.total.useful_late;
-      inflight.erase(it);
+      inflight.erase(blk);
     } else if (auto ev = evicted_unused.find(blk); ev != evicted_unused.end()) {
       // We evicted this block unused and now it is needed again: the prefetch
       // was early and hurtful (it pushed out something and then was itself lost).
@@ -321,6 +343,23 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
       ++owner.total.early_hurtful;
       evicted_unused.erase(ev);
     }
+  }
+
+  // ---- 3a. miss-correlation learning (for source=markov) -------------------
+  // Learn "after a miss on A, the next miss was B". Trained on misses and on
+  // first uses of prefetched blocks, so the chain stays complete once prefetching
+  // has turned the misses into hits. Always trained, like the stride table.
+  if (!cache_hit || useful_prefetch) {
+    if (have_last_miss && last_miss != blk) {
+      // put() makes the link the newest, so the table is LRU by training use and
+      // the oldest link is the one dropped when it is full.
+      if (const auto* e = markov.find(last_miss); e && e->next == blk)
+        markov.put(last_miss, markov_entry{blk, std::min(e->conf + 1, 3)});
+      else
+        markov.put(last_miss, markov_entry{blk, 0});
+    }
+    last_miss = blk;
+    have_last_miss = true;
   }
 
   // ---- 3. stride learning --------------------------------------------------
@@ -348,7 +387,7 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
 
   // ---- 4. trigger -----------------------------------------------------------
   const auto& h = reg.active;
-  if (reg.suspended_epochs == 0 && h.enable) {
+  if (reg.suspended_epochs == 0 && h.source != stride_source::OFF) {
     bool fire = false;
     switch (h.trigger) {
     case trigger_mode::MISS:
@@ -363,9 +402,6 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
     case trigger_mode::ACCESS:
       fire = true;
       break;
-    case trigger_mode::DEAD_BLOCK: // reserved, not implemented: acts like MISS
-      fire = !cache_hit;
-      break;
     }
 
     // Which stride to use? Next-line always steps one line. Per-PC uses the
@@ -379,26 +415,71 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
       trained = (stride != 0 && conf >= static_cast<int>(h.confirm) - 1);
     }
 
-    if (fire && trained && use_stride != 0) {
-      // Confidence decides what to do with the prefetch: below `drop` issue
-      // nothing, below `fill` send it only to the next level down, else fill
-      // this level (the slide rule C*savings - (1-C)*cost, reduced to thresholds).
-      const double c = confidence(reg, conf);
-      if (c >= h.drop_thresh) {
-        const bool fill_here = c >= h.fill_thresh;
-        const auto meta = h.to_word(); // lets a downstream consumer see the hint
-        for (int i = 0; i < h.degree; ++i) {
+    if (fire) {
+      const auto meta = h.to_word(); // lets a downstream consumer see the hint
+      // Queue one candidate unless it is already on the way or already here.
+      auto enqueue = [&](champsim::address pf, bool fill_here) {
+        const uint64_t pblk = champsim::block_number{pf}.to<uint64_t>();
+        if (inflight.contains(pblk) || resident.contains(pblk) || lower_tracked.contains(pblk) || pending_blocks.count(pblk))
+          return false;
+        if (pending.size() >= PENDING_MAX) { // the oldest queued candidate is the stalest
+          pending_blocks.erase(champsim::block_number{pending.front().addr}.to<uint64_t>());
+          pending.pop_front();
+        }
+        pending.push_back({pf, fill_here, ridx, meta});
+        pending_blocks.insert(pblk);
+        return true;
+      };
+      // Prefetching physical addresses: never cross the page (the next page is unrelated).
+      auto same_page = [&](champsim::address pf) { return intern_->virtual_prefetch || champsim::page_number{pf} == champsim::page_number{addr}; };
+
+      // Fill policy: confidence C decides whether the block fills this level.
+      const double conf_c = confidence(reg, conf);
+      bool fill_here = true;
+      switch (h.fill) {
+      case fill_policy::ALWAYS_L1D: fill_here = true; break;
+      case fill_policy::GATED_LOW: fill_here = conf_c >= knobbed_pf::GATED_LOW_THRESHOLD; break;
+      case fill_policy::GATED_HIGH: fill_here = conf_c >= knobbed_pf::GATED_HIGH_THRESHOLD; break;
+      case fill_policy::ALWAYS_L2: fill_here = false; break;
+      }
+
+      const auto rg = knobbed_pf::ladder_rung(h.source, h.level);
+      bool engine_had_something = false; // did the engine have a prediction (even if it was already queued)?
+      if (h.source == stride_source::MARKOV) {
+        // Follow the chain of remembered successors. The first (distance-1)
+        // links are skipped, the next `degree` links are prefetched. The first
+        // link must have repeated `confirm` times; a missing link ends the walk.
+        uint64_t p = blk;
+        for (int i = 0; i < rg.distance + rg.degree - 1; ++i) {
+          const auto* it = markov.find(p);
+          if (!it || (i == 0 && it->conf < static_cast<int>(h.confirm) - 1))
+            break;
+          p = it->next;
+          if (i + 1 >= rg.distance) {
+            engine_had_something = true;
+            enqueue(champsim::address{champsim::block_number{p}}, fill_here);
+          }
+        }
+      } else if (trained && use_stride != 0) {
+        engine_had_something = true;
+        for (int i = 0; i < rg.degree; ++i) {
           // Candidate i is (distance + i) strides ahead of this access.
-          const auto steps = static_cast<champsim::block_number::difference_type>(h.distance + i);
+          const auto steps = static_cast<champsim::block_number::difference_type>(rg.distance + i);
           champsim::address pf{champsim::block_number{cl_addr} + use_stride * steps};
-          if (!intern_->virtual_prefetch && champsim::page_number{pf} != champsim::page_number{addr})
-            break; // physical addresses: do not run off the page
-          const uint64_t pblk = champsim::block_number{pf}.to<uint64_t>();
-          if (inflight.count(pblk) || resident.count(pblk) || lower_tracked.count(pblk))
-            continue; // already on the way or already here
-          if (pending.size() >= PENDING_MAX)
-            pending.pop_front(); // the oldest queued candidate is the stalest
-          pending.push_back({pf, fill_here, ridx, meta});
+          if (!same_page(pf))
+            break;
+          enqueue(pf, fill_here);
+        }
+      }
+      // Fallback: the engine had nothing to say (stride not trained yet, Markov
+      // has no link). Send a small next-line prefetch to the next level down, where
+      // a wrong guess costs little. Next-line itself has no such case.
+      if (h.fallback && !engine_had_something && h.source != stride_source::NEXT_LINE) {
+        for (int i = 1; i <= FALLBACK_DEGREE; ++i) {
+          champsim::address pf{champsim::block_number{cl_addr} + i};
+          if (!same_page(pf))
+            break;
+          enqueue(pf, false);
         }
       }
     }
@@ -415,11 +496,14 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
 // demand accesses). It first updates the region's smoothed accuracy, then (if
 // the region's hint allows throttling) nudges distance or degree.
 // Rules are checked in this order, and only the first that applies is used:
-//   accuracy < acc_floor           -> suspend the prefetcher for a while
-//   accuracy < acc_low             -> degree - 1
-//   unused/hurtful > early_high    -> distance - 1
-//   late fraction > late_high      -> distance + 1
-//   accuracy > acc_high            -> degree + 1
+//   accuracy < acc_floor                  -> suspend the prefetcher for a while
+//   accuracy < acc_low, or pollution      -> one rung down the ladder
+//   unused/hurtful > early_high
+//   accuracy > acc_high                   -> one rung up, never above the configured level
+// So the controller can only reduce aggressiveness relative to the hint (and
+// recover); "throttle on" never overrides the hint upward. Note that acc_ewma and
+// the fill-policy confidence gating adapt even when throttle is off; only the
+// ladder stepping and suspension are switched by the throttle knob.
 void knobbed::end_epoch(region& r, std::size_t idx)
 {
   (void)idx;
@@ -429,10 +513,10 @@ void knobbed::end_epoch(region& r, std::size_t idx)
     if (--r.suspended_epochs == 0)
       r.active = r.configured;
   } else if (e.total_issued() < tp.min_issued) {
-    // Too little evidence. This can happen because confidence fell below the
-    // `drop` threshold, so nothing is issued and accuracy could never be
-    // re-measured (it would stay low forever). Drift back toward optimism so
-    // the prefetcher tries again.
+    // Too little evidence (few triggers, or the fill policy sent nearly everything
+    // to the next level where it is not counted here). Accuracy could then never be
+    // re-measured and would stay low forever, so drift back toward optimism and
+    // let the prefetcher try again.
     if (e.demand_misses > 0)
       r.acc_ewma = 0.5 * r.acc_ewma + 0.5;
   } else if (e.total_issued() >= tp.min_issued) {
@@ -440,21 +524,17 @@ void knobbed::end_epoch(region& r, std::size_t idx)
     if (r.active.throttle) {
       auto& a = r.active;
       const double acc = e.accuracy();
-      const double late = e.useful() ? static_cast<double>(e.useful_late) / static_cast<double>(e.useful()) : 0.0;
       const double early = static_cast<double>(e.unused_evicted + e.early_hurtful) / static_cast<double>(e.total_issued());
-      const auto before = std::pair{a.distance, a.degree};
+      const auto before = a.level;
       if (acc < tp.acc_floor && e.total_issued() >= 2 * tp.min_issued) {
         r.suspended_epochs = tp.suspend_epochs; // "if unsure, don't prefetch" (P7:10)
-      } else if (acc < tp.acc_low) {
-        a.degree = static_cast<uint8_t>(std::max(1, a.degree - 1));
-      } else if (early > tp.early_high) {
-        a.distance = static_cast<uint8_t>(std::max(1, a.distance - 1));
-      } else if (late > tp.late_high) {
-        a.distance = std::min(tp.max_distance, static_cast<uint8_t>(a.distance + 1));
+      } else if (acc < tp.acc_low || early > tp.early_high) {
+        a.level = static_cast<uint8_t>(std::max(0, a.level - 1)); // too inaccurate or polluting: one rung down
       } else if (acc > tp.acc_high) {
-        a.degree = std::min(tp.max_degree, static_cast<uint8_t>(a.degree + 1));
+        // Healthy again: climb back, but never above what the hint asked for.
+        a.level = std::min<uint8_t>(r.configured.level, static_cast<uint8_t>(a.level + 1));
       }
-      if (before != std::pair{a.distance, a.degree} || r.suspended_epochs)
+      if (before != a.level || r.suspended_epochs)
         ++r.throttle_changes;
     }
   }
@@ -471,23 +551,23 @@ uint32_t knobbed::prefetcher_cache_fill(champsim::address addr, long set, long w
   // pollution signal (and it may turn into an "early and hurtful" miss later).
   if (evicted_addr != champsim::address{}) {
     const uint64_t eblk = champsim::block_number{evicted_addr}.to<uint64_t>();
-    if (auto it = resident.find(eblk); it != resident.end()) {
-      auto& owner = regions[it->second.region_idx];
+    if (const auto* t = resident.find(eblk)) {
+      const auto idx = t->region_idx;
+      auto& owner = regions[idx];
       ++owner.epoch.unused_evicted;
       ++owner.total.unused_evicted;
-      note_evicted_unused(eblk, it->second.region_idx);
-      resident.erase(it);
+      note_evicted_unused(eblk, idx);
+      resident.erase(eblk);
     }
   }
 
   // A prefetch we issued has landed: it moves from "in flight" to "resident,
   // unused". It leaves `resident` on its first demand hit or when evicted.
   if (prefetch) {
-    if (auto it = inflight.find(blk); it != inflight.end()) {
-      if (resident.size() >= TRACK_MAX)
-        resident.erase(resident.begin()); // bound memory; losing old entries only drops stats
-      resident[blk] = it->second;
-      inflight.erase(it);
+    if (const auto* t = inflight.find(blk)) {
+      const auto tb = *t; // copy: erase() below invalidates t
+      inflight.erase(blk);
+      resident.put(blk, tb); // oldest entry is dropped if full; that only loses stats
     }
   }
   return metadata_in;
@@ -498,6 +578,34 @@ uint32_t knobbed::prefetcher_cache_fill(champsim::address addr, long set, long w
 // next cycle.
 void knobbed::prefetcher_cycle_operate()
 {
+  ++now;
+  // ChampSim zeroes its own statistics when warmup ends. Do the same for our
+  // reported totals (the epoch counters and learned state carry on) so they cover
+  // the same instructions as ChampSim's.
+  if (in_warmup && !intern_->warmup) {
+    in_warmup = false;
+    for (auto& r : regions)
+      r.total = {};
+  }
+  // Forget prefetches whose outcome we can no longer observe. An in-flight
+  // prefetch that never produced a fill (block already present, or merged with
+  // a demand miss) must not stay "in flight" forever: it would block prefetching
+  // that block again and make a much later demand miss look like a late prefetch.
+  // A lower-level prefetch is assumed evicted from that level after LOWER_EXPIRE
+  // cycles; a demand miss after that is not credited to the prefetcher.
+  // Both maps are in issue order, so only the front needs checking.
+  inflight.expire_oldest([&](const tracked_block& t) { return now - t.born > INFLIGHT_EXPIRE; });
+  lower_tracked.expire_oldest([&](const tracked_block& t) { return now - t.born > LOWER_EXPIRE; });
+
+  // Drop queued candidates that became redundant while they waited (a demand or
+  // an earlier prefetch already brought the block in).
+  while (!pending.empty()) {
+    const uint64_t b = champsim::block_number{pending.front().addr}.to<uint64_t>();
+    if (!(inflight.contains(b) || resident.contains(b) || lower_tracked.contains(b)))
+      break;
+    pending_blocks.erase(b);
+    pending.pop_front();
+  }
   if (pending.empty())
     return;
   const auto c = pending.front();
@@ -505,21 +613,18 @@ void knobbed::prefetcher_cycle_operate()
     return; // PQ full: retry next cycle
 
   pending.pop_front();
-  auto& r = regions[c.region_idx];
   const uint64_t pblk = champsim::block_number{c.addr}.to<uint64_t>();
+  pending_blocks.erase(pblk);
+  auto& r = regions[c.region_idx];
   if (c.fill_this_level) {
     // The fill will be seen by prefetcher_cache_fill(), so track it there.
-    if (inflight.size() >= TRACK_MAX)
-      inflight.erase(inflight.begin());
-    inflight[pblk] = tracked_block{c.region_idx};
+    inflight.put(pblk, tracked_block{c.region_idx, now});
     ++r.epoch.issued;
     ++r.total.issued;
   } else {
     // Fills a lower level only: this cache never sees the fill, so the only
     // observable outcome is a later demand miss on the block (useful_lower).
-    if (lower_tracked.size() >= TRACK_MAX)
-      lower_tracked.erase(lower_tracked.begin());
-    lower_tracked[pblk] = tracked_block{c.region_idx};
+    lower_tracked.put(pblk, tracked_block{c.region_idx, now});
     ++r.epoch.issued_lower;
     ++r.total.issued_lower;
   }
@@ -533,13 +638,14 @@ void knobbed::prefetcher_final_stats()
     const auto& r = regions[i];
     const auto& t = r.total;
     if (i > 0 || t.demand_accesses)
-      std::printf("[knobbed %s] region %zu [%#llx,%#llx) final distance=%d degree=%d changes=%llu | issued=%llu lower=%llu useful=%llu "
+      std::printf("[knobbed %s] region %zu [%#llx,%#llx) final level=%d (distance=%d degree=%d) changes=%llu | issued=%llu lower=%llu useful=%llu "
                   "(timely=%llu late=%llu lower=%llu) unused_evicted=%llu early_hurtful=%llu | accuracy=%.3f coverage=%.3f timeliness=%.3f\n",
-                  intern_->NAME.c_str(), i, static_cast<unsigned long long>(r.start), static_cast<unsigned long long>(r.end), r.active.distance,
-                  r.active.degree, static_cast<unsigned long long>(r.throttle_changes), static_cast<unsigned long long>(t.issued),
+                  intern_->NAME.c_str(), i, static_cast<unsigned long long>(r.start), static_cast<unsigned long long>(r.end), r.active.level, r.active.distance(),
+                  r.active.degree(), static_cast<unsigned long long>(r.throttle_changes), static_cast<unsigned long long>(t.issued),
                   static_cast<unsigned long long>(t.issued_lower), static_cast<unsigned long long>(t.useful()),
                   static_cast<unsigned long long>(t.useful_timely), static_cast<unsigned long long>(t.useful_late),
                   static_cast<unsigned long long>(t.useful_lower), static_cast<unsigned long long>(t.unused_evicted),
                   static_cast<unsigned long long>(t.early_hurtful), t.accuracy(), t.coverage(), t.timeliness());
   }
+  std::printf("[knobbed %s] markov table: %zu of %zu entries used\n", intern_->NAME.c_str(), markov.size(), MARKOV_MAX);
 }
