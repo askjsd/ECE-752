@@ -25,6 +25,9 @@
 #include <array>
 #include <bitset>
 #include <deque>
+#include <map>
+#include <optional>
+#include <string>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -181,7 +184,24 @@ public:
   [[nodiscard]] auto roi_instr() const { return roi_stats.instrs(); }
   [[nodiscard]] auto roi_cycle() const { return roi_stats.cycles(); }
   [[nodiscard]] auto sim_instr() const { return num_retired - begin_phase_instr; }
-  [[nodiscard]] auto sim_cycle() const { return (current_time.time_since_epoch() / clock_period) - sim_stats.begin_cycles; }
+  [[nodiscard]] auto sim_cycle() const { return static_cast<long long>(cycle_count) - sim_stats.begin_cycles; }
+
+  // Dynamic frequency scaling: rescale every period-derived latency, then switch the clock.
+  void set_clock_period(champsim::chrono::picoseconds new_period);
+  // DVFS hints (applied at retire; do_cycle applies pending_period to the whole core domain)
+  std::optional<champsim::chrono::picoseconds> pending_period{};
+  champsim::chrono::picoseconds base_period{};
+  std::vector<champsim::chrono::picoseconds> dvfs_periods{}; // index = hint level; [0] = base
+  champsim::chrono::picoseconds dvfs_penalty{};              // fetch stall per transition
+  champsim::chrono::clock::time_point dvfs_stall_until{}; // intentional stall; exempt from deadlock detection
+  champsim::chrono::picoseconds dvfs_min_dwell{}; // governor: ignore requests sooner than this after a change
+  long long dvfs_transitions = 0;
+  std::map<long long, long long> time_at_period_ps{};        // period_ps -> ps spent there (measured window)
+  champsim::chrono::clock::time_point last_period_change{};
+  void init_dvfs();
+  void account_period_time();
+  [[nodiscard]] std::string dvfs_summary() const;
+  uint64_t cycle_count = 0; // true cycle count; time/clock_period is wrong once the period changes
 
   void print_deadlock() final;
 

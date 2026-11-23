@@ -25,6 +25,9 @@
 #include <fmt/ranges.h>
 
 #include "cache.h"
+#include <cmath>
+#include <cstdlib>
+#include <sstream>
 #include "champsim.h"
 #include "deadlock.h"
 #include "event_listeners.h"
@@ -34,6 +37,7 @@
 long O3_CPU::operate()
 {
   long progress{0};
+  ++cycle_count;
   progress += retire_rob();                    // retire
   progress += complete_inflight_instruction(); // finalize execution
   progress += execute_instruction();           // execute instructions
@@ -63,12 +67,17 @@ void O3_CPU::begin_phase()
 {
   begin_phase_instr = num_retired;
   begin_phase_time = current_time;
+  init_dvfs();
+  time_at_period_ps.clear();
+  dvfs_transitions = 0;
+  last_period_change = current_time;
 
   // Record where the next phase begins
   stats_type stats;
   stats.name = "CPU " + std::to_string(cpu);
   stats.begin_instrs = num_retired;
-  stats.begin_cycles = begin_phase_time.time_since_epoch() / clock_period;
+  stats.begin_cycles = static_cast<long long>(cycle_count);
+  stats.begin_time_ps = begin_phase_time.time_since_epoch().count();
   sim_stats = stats;
 }
 
@@ -76,7 +85,8 @@ void O3_CPU::end_phase(unsigned finished_cpu)
 {
   // Record where the phase ended (overwrite if this is later)
   sim_stats.end_instrs = num_retired;
-  sim_stats.end_cycles = current_time.time_since_epoch() / clock_period;
+  sim_stats.end_cycles = static_cast<long long>(cycle_count);
+  sim_stats.end_time_ps = current_time.time_since_epoch().count();
 
   if (finished_cpu == this->cpu) {
     finish_phase_instr = num_retired;
@@ -704,8 +714,15 @@ long O3_CPU::retire_rob()
     }
   }
 
-  uint64_t cycles = current_time.time_since_epoch() / clock_period;
+  uint64_t cycles = cycle_count;
   handle_event<Event::RETIRE>(cpu, retire_begin, retire_end, cycles);
+
+  for (auto rob_it = retire_begin; rob_it != retire_end; ++rob_it) {
+    if (rob_it->dvfs_level >= 0) {
+      const auto lvl = static_cast<std::size_t>(rob_it->dvfs_level);
+      pending_period = dvfs_periods.at(std::min(lvl, std::size(dvfs_periods) - 1));
+    }
+  }
 
   auto retire_count = std::distance(retire_begin, retire_end);
   num_retired += retire_count;
@@ -830,4 +847,68 @@ bool CacheBus::issue_write(request_type data_packet)
   data_packet.response_requested = false;
 
   return lower_level->add_wq(data_packet);
+}
+
+void O3_CPU::set_clock_period(champsim::chrono::picoseconds new_period)
+{
+  const auto old_period = clock_period;
+  if (new_period == old_period)
+    return;
+  account_period_time();
+  ++dvfs_transitions;
+  fetch_resume_time = std::max(fetch_resume_time, current_time) + dvfs_penalty; // PLL relock / voltage ramp
+  dvfs_stall_until = fetch_resume_time;
+  // Each latency is an exact multiple of the old period, so the ratio rescale is exact.
+  auto rescale = [&](champsim::chrono::clock::duration& d) { d = (d / old_period) * new_period; };
+  rescale(BRANCH_MISPREDICT_PENALTY);
+  rescale(DISPATCH_LATENCY);
+  rescale(DECODE_LATENCY);
+  rescale(SCHEDULING_LATENCY);
+  rescale(EXEC_LATENCY);
+  rescale(DIB_HIT_LATENCY);
+  clock_period = new_period;
+}
+
+void O3_CPU::init_dvfs()
+{
+  if (base_period.count() != 0)
+    return;
+  base_period = clock_period;
+  const auto b = static_cast<double>(base_period.count());
+  std::vector<double> ratios{1.0, 0.8, 0.6, 0.5}; // level 0..3 = 1x, 1.25x, 1.67x, 2x of base frequency
+  if (const char* e = std::getenv("CHAMPSIM_DVFS_PERIODS_PS")) {
+    ratios.clear();
+    std::stringstream ss{e};
+    std::string item;
+    while (std::getline(ss, item, ','))
+      ratios.push_back(std::stod(item) / b);
+  }
+  for (auto r : ratios)
+    dvfs_periods.emplace_back(static_cast<long long>(std::llround(b * r)));
+  long long penalty_ns = 2000; // default 2 us per transition
+  if (const char* e = std::getenv("CHAMPSIM_DVFS_PENALTY_NS"))
+    penalty_ns = std::stoll(e);
+  dvfs_penalty = champsim::chrono::picoseconds{penalty_ns * 1000};
+  long long dwell_ns = 0;
+  if (const char* e = std::getenv("CHAMPSIM_DVFS_MIN_DWELL_NS"))
+    dwell_ns = std::stoll(e);
+  dvfs_min_dwell = champsim::chrono::picoseconds{dwell_ns * 1000};
+}
+
+void O3_CPU::account_period_time()
+{
+  if (!warmup)
+    time_at_period_ps[clock_period.count()] += (current_time - last_period_change).count();
+  last_period_change = current_time;
+}
+
+std::string O3_CPU::dvfs_summary() const
+{
+  auto copy = time_at_period_ps;
+  if (!warmup)
+    copy[clock_period.count()] += (current_time - last_period_change).count();
+  std::string out = "CPU " + std::to_string(cpu) + " DVFS transitions: " + std::to_string(dvfs_transitions) + " time_at_period_ps:";
+  for (auto [p, t] : copy)
+    out += " " + std::to_string(p) + "=" + std::to_string(t);
+  return out;
 }

@@ -19,7 +19,9 @@ import argparse, re, struct, sys
 import capstone
 from capstone import x86 as X
 
-REG_SP, REG_FLAGS, REG_IP = 6, 25, 26          # champsim::REG_* in inc/trace_instruction.h
+REG_SP, REG_FLAGS, REG_IP = 6, 25, 26
+REG_DVFS = 254                                  # champsim::REG_DVFS_MARKER
+DVFS_MAGIC = 0x44560000                         # nopl (0x44560000|level)(%rax) == DVFS hint; level 0 = base clock          # champsim::REG_* in inc/trace_instruction.h
 NSRC, NDST = 4, 2                              # register slots
 NSMEM, NDMEM = 4, 2                            # memory slots
 REC = struct.Struct("<QBB2B4B2Q4Q")            # == sizeof(input_instr) == 64
@@ -56,7 +58,7 @@ def reg_id(name):
     if m:
         name = "vec" + m.group(1)
     if name not in _ids:
-        if _next[0] > 255:
+        if _next[0] > 250:
             raise SystemExit("too many distinct registers")
         _ids[name] = _next[0]
         _next[0] += 1
@@ -81,6 +83,12 @@ def decode(pc, code):
         d = (len(code), None, (), ())          # undecodable: emit as a plain instruction
         _cache[key] = d
         return d
+    if ins.mnemonic == "nop" and len(ins.operands) == 1 and ins.operands[0].type == X.X86_OP_MEM:
+        disp = ins.operands[0].mem.disp & 0xFFFFFFFF
+        if disp & 0xFFFFFF00 == DVFS_MAGIC:       # DVFS hint: reserved dest regs, no deps, no memory
+            d = (ins.size, None, (), (REG_DVFS, (disp & 0xFF) + 1))
+            _cache[key] = d
+            return d
     rd, wr = ins.regs_access()
     rd = [reg_id(ins.reg_name(r)) for r in rd]
     wr = [reg_id(ins.reg_name(r)) for r in wr]

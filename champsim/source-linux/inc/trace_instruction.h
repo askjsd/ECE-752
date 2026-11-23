@@ -25,6 +25,8 @@ namespace champsim
 constexpr char REG_STACK_POINTER = 6;
 constexpr char REG_FLAGS = 25;
 constexpr char REG_INSTRUCTION_POINTER = 26;
+// DVFS hint marker: destination_registers[0] == REG_DVFS_MARKER, destination_registers[1] == level + 1
+constexpr unsigned char REG_DVFS_MARKER = 254;
 } // namespace champsim
 
 // instruction format

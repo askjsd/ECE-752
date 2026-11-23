@@ -26,6 +26,8 @@
 #include "environment.h"
 #include "event_listeners.h"
 #include "ooo_cpu.h"
+#include <cstdlib>
+#include <sstream>
 #include "operable.h"
 #include "phase_info.h"
 #include "tracereader.h"
@@ -38,6 +40,18 @@ std::chrono::seconds elapsed_time() { return std::chrono::duration_cast<std::chr
 
 namespace champsim
 {
+// Switch one core's clock domain (the core and the caches named cpu<N>_*) to a new period.
+void set_core_clock_period(environment& env, uint32_t cpu_idx, champsim::chrono::picoseconds p)
+{
+  const std::string prefix = "cpu" + std::to_string(cpu_idx) + "_";
+  for (O3_CPU& cpu : env.cpu_view())
+    if (cpu.cpu == cpu_idx)
+      cpu.set_clock_period(p);
+  for (CACHE& c : env.cache_view())
+    if (c.NAME.rfind(prefix, 0) == 0)
+      c.set_clock_period(p);
+}
+
 long do_cycle(environment& env, std::vector<tracereader>& traces, std::vector<std::size_t> trace_index, champsim::chrono::clock& global_clock)
 {
   auto operables = env.operable_view();
@@ -48,6 +62,39 @@ long do_cycle(environment& env, std::vector<tracereader>& traces, std::vector<st
   long progress{0};
   for (champsim::operable& op : operables) {
     progress += op.operate_on(global_clock);
+  }
+
+  // DVFS test hook: CHAMPSIM_FREQ_SCHEDULE="instr:period_ps,instr:period_ps,..." (instr = retired count)
+  {
+    static const auto schedule = [] {
+      std::vector<std::pair<long long, long>> v;
+      if (const char* e = std::getenv("CHAMPSIM_FREQ_SCHEDULE")) {
+        std::stringstream ss{e};
+        std::string item;
+        while (std::getline(ss, item, ','))
+          v.emplace_back(std::stoll(item.substr(0, item.find(':'))), std::stol(item.substr(item.find(':') + 1)));
+      }
+      return v;
+    }();
+    static std::size_t next_step = 0;
+    for (O3_CPU& cpu : env.cpu_view()) {
+      while (next_step < schedule.size() && (long long)cpu.num_retired >= schedule[next_step].first) {
+        champsim::set_core_clock_period(env, cpu.cpu, champsim::chrono::picoseconds{schedule[next_step].second});
+        ++next_step;
+      }
+    }
+  }
+
+  // Apply DVFS hints that retired this cycle
+  for (O3_CPU& cpu : env.cpu_view()) {
+    if (cpu.pending_period) {
+      if (*cpu.pending_period == cpu.clock_period) {
+        cpu.pending_period.reset(); // request already satisfied (e.g. a short region's boost+restore cancelled out)
+      } else if (cpu.current_time - cpu.last_period_change >= cpu.dvfs_min_dwell) {
+        champsim::set_core_clock_period(env, cpu.cpu, *cpu.pending_period);
+        cpu.pending_period.reset();
+      } // else: held by the dwell governor; a later request may replace it
+    }
   }
 
   // Read from trace
@@ -72,8 +119,8 @@ phase_stats do_phase(const phase_info& phase, environment& env, std::vector<trac
     op.begin_phase();
   }
 
-  const auto time_quantum = std::accumulate(std::cbegin(operables), std::cend(operables), champsim::chrono::clock::duration::max(),
-                                            [](const auto acc, const operable& y) { return std::min(acc, y.clock_period); });
+  auto current_quantum = [&] { return std::accumulate(std::cbegin(operables), std::cend(operables), champsim::chrono::clock::duration::max(),
+                                            [](const auto acc, const operable& y) { return std::min(acc, y.clock_period); }); };
 
   bool livelock_trigger{false};
   uint64_t livelock_period{10000000};
@@ -87,11 +134,15 @@ phase_stats do_phase(const phase_info& phase, environment& env, std::vector<trac
   std::vector<bool> phase_complete(std::size(env.cpu_view()), false);
   while (!std::accumulate(std::begin(phase_complete), std::end(phase_complete), true, std::logical_and{})) {
     auto next_phase_complete = phase_complete;
-    global_clock.tick(time_quantum);
+    global_clock.tick(current_quantum()); // recomputed: core period can change (DVFS)
 
     auto progress = do_cycle(env, traces, trace_index, global_clock);
 
-    if (progress == 0) {
+    bool in_dvfs_stall = false;
+    for (O3_CPU& cpu : env.cpu_view())
+      in_dvfs_stall = in_dvfs_stall || cpu.current_time < cpu.dvfs_stall_until;
+
+    if (progress == 0 && !in_dvfs_stall) {
       ++stalled_cycle;
     } else {
       stalled_cycle = 0;
@@ -146,6 +197,8 @@ phase_stats do_phase(const phase_info& phase, environment& env, std::vector<trac
 
         fmt::print("{} finished CPU {} instructions: {} cycles: {} cumulative IPC: {:.4g} (Simulation time: {:%H hr %M min %S sec})\n", phase_name, cpu.cpu,
                    cpu.sim_instr(), cpu.sim_cycle(), std::ceil(cpu.sim_instr()) / std::ceil(cpu.sim_cycle()), elapsed_time());
+        if (!is_warmup)
+          fmt::print("{}\n", cpu.dvfs_summary());
       }
     }
 

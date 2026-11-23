@@ -13,6 +13,8 @@ struct cpu_stats {
   long long begin_cycles = 0;
   long long end_instrs = 0;
   long long end_cycles = 0;
+  long long begin_time_ps = 0; // wall-clock time, valid across frequency changes
+  long long end_time_ps = 0;
   uint64_t total_rob_occupancy_at_branch_mispredict = 0;
 
   champsim::stats::event_counter<branch_type> total_branch_types = {};
@@ -20,6 +22,7 @@ struct cpu_stats {
 
   [[nodiscard]] auto instrs() const { return end_instrs - begin_instrs; }
   [[nodiscard]] auto cycles() const { return end_cycles - begin_cycles; }
+  [[nodiscard]] auto time_ps() const { return end_time_ps - begin_time_ps; }
 };
 
 cpu_stats operator-(cpu_stats lhs, cpu_stats rhs);

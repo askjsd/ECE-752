@@ -160,6 +160,17 @@ public:
   std::size_t PQ_SIZE;
   champsim::chrono::clock::duration HIT_LATENCY;
   champsim::chrono::clock::duration FILL_LATENCY;
+
+public:
+  void set_clock_period(champsim::chrono::picoseconds new_period)
+  {
+    const auto old_period = clock_period;
+    if (new_period == old_period)
+      return;
+    HIT_LATENCY = (HIT_LATENCY / old_period) * new_period;
+    FILL_LATENCY = (FILL_LATENCY / old_period) * new_period;
+    clock_period = new_period;
+  }
   champsim::data::bits OFFSET_BITS;
   set_type block{static_cast<typename set_type::size_type>(NUM_SET * NUM_WAY)};
   champsim::bandwidth::maximum_type MAX_TAG, MAX_FILL;

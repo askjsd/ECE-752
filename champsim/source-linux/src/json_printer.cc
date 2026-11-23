@@ -35,6 +35,7 @@ void to_json(nlohmann::json& j, const O3_CPU::stats_type& stats)
 
   j = nlohmann::json{{"instructions", stats.instrs()},
                      {"cycles", stats.cycles()},
+                     {"time_ps", stats.time_ps()},
                      {"Avg ROB occupancy at mispredict", std::ceil(stats.total_rob_occupancy_at_branch_mispredict) / std::ceil(total_mispredictions)},
                      {"mispredict", mpki}};
 }

@@ -105,6 +105,8 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
 
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
 
+  int dvfs_level = -1; // >= 0: this instruction is a DVFS hint (level 0 = base clock)
+
   branch_type branch{NOT_BRANCH};
   champsim::address branch_target{};
 
@@ -132,6 +134,11 @@ private:
   template <typename T>
   ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid)
   {
+    if (instr.destination_registers[0] == champsim::REG_DVFS_MARKER) {
+      dvfs_level = static_cast<int>(instr.destination_registers[1]) - 1;
+      instr.destination_registers[0] = 0; // strip: the hint carries no register dependencies
+      instr.destination_registers[1] = 0;
+    }
     std::remove_copy(std::begin(instr.destination_registers), std::end(instr.destination_registers), std::back_inserter(this->destination_registers), 0);
     std::remove_copy(std::begin(instr.source_registers), std::end(instr.source_registers), std::back_inserter(this->source_registers), 0);
 

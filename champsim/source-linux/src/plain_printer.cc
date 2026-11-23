@@ -48,8 +48,8 @@ std::vector<std::string> champsim::plain_printer::format(O3_CPU::stats_type stat
       std::accumulate(std::begin(types), std::end(types), 0LL, [btm = stats.branch_type_misses](auto acc, auto next) { return acc + btm.value_or(next, 0); }));
 
   std::vector<std::string> lines{};
-  lines.push_back(fmt::format("{} cumulative IPC: {} instructions: {} cycles: {}", stats.name, ::print_ratio(stats.instrs(), stats.cycles()), stats.instrs(),
-                              stats.cycles()));
+  lines.push_back(fmt::format("{} cumulative IPC: {} instructions: {} cycles: {} time_ps: {}", stats.name, ::print_ratio(stats.instrs(), stats.cycles()), stats.instrs(),
+                              stats.cycles(), stats.time_ps()));
 
   lines.push_back(fmt::format("{} Branch Prediction Accuracy: {}% MPKI: {} Average ROB Occupancy at Mispredict: {}", stats.name,
                               ::print_ratio(100 * (total_branch - total_mispredictions), total_branch),
