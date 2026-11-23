@@ -1,5 +1,7 @@
 #include "tage.h"
 
+#include "cache.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <limits>

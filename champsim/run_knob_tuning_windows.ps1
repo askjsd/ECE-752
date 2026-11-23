@@ -115,6 +115,13 @@ if ($Rebuild -or -not (Test-Path $exe)) {
     if (Test-Path $modules) { Remove-Item -Recurse -Force $modules }
     $null = robocopy (Join-Path $champsimDir "modules") $modules /E /NFL /NDL /NJH /NJS /NP
     if ($LASTEXITCODE -ge 8) { throw "Copying modules failed (robocopy exit $LASTEXITCODE)." }
+    # Skip modules the source tree already ships under the same path (source-windows has
+    # prefetcher/tage as well as modules/prefetcher/tage); the linker would see them twice.
+    foreach ($kind in Get-ChildItem $modules -Directory) {
+        foreach ($m in Get-ChildItem $kind.FullName -Directory) {
+            if (Test-Path (Join-Path (Join-Path $BuildDir $kind.Name) $m.Name)) { Remove-Item -Recurse -Force $m.FullName }
+        }
+    }
     foreach ($stale in @("absolute.options", ".csconfig", "inc\cache_modules.h", "inc\ooo_cpu_modules.h")) {
         $p = Join-Path $BuildDir $stale
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }

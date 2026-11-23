@@ -106,6 +106,12 @@ def build(build_dir, rebuild):
     modules = build_dir / "knobbed_modules"
     shutil.rmtree(modules, ignore_errors=True)
     shutil.copytree(MODULES, modules)
+    # Skip modules the source tree already ships under the same path (source-windows has
+    # prefetcher/tage as well as modules/prefetcher/tage); the linker would see them twice.
+    for kind in modules.iterdir():
+        for module in list(kind.iterdir()) if kind.is_dir() else []:
+            if (build_dir / kind.name / module.name).is_dir():
+                shutil.rmtree(module)
     for stale in (".csconfig", "inc/cache_modules.h", "inc/ooo_cpu_modules.h"):
         path = build_dir / stale
         if path.is_dir():

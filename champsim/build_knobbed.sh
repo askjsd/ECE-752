@@ -44,6 +44,12 @@ cp -a "$src/." "$build/"
 sed -i 's/-llibz/-lz/' "$build/Makefile"
 rm -rf "$build/knobbed_modules" "$build/absolute.options" "$build/.csconfig" "$build/inc/cache_modules.h" "$build/inc/ooo_cpu_modules.h"
 cp -r "$here/modules" "$build/knobbed_modules"
+# Skip modules the source tree already ships under the same path (source-windows has
+# prefetcher/tage as well as modules/prefetcher/tage); the linker would see them twice.
+for m in "$build"/knobbed_modules/*/*/; do
+    rel="${m#"$build"/knobbed_modules/}"
+    [[ -d "$build/$rel" ]] && rm -rf "$m"
+done
 
 cd "$build"
 python3 ./config.sh --module-dir "$build/knobbed_modules" "$here/champsim_config_knobbed.json"
