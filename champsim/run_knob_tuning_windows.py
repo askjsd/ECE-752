@@ -7,7 +7,7 @@ build commands from run_windows.py / run_windows.ps1. The Linux version of every
 step is tested; the --report-only mode below works on any OS and was tested.
 
 Stages, per run:
-  1. preflight   python + numpy, clang, make, xz (for .xz traces), vcpkg DLLs
+  1. preflight   python + numpy, clang, make, vcpkg DLLs (no xz.exe needed: ChampSim reads .xz itself)
   2. build       copy source-windows + champsim/modules to a path WITHOUT spaces
                  (ChampSim's Makefile breaks on spaces; "ece 752" has one) and build
                  champsim_knobbed.exe from champsim_config_knobbed.json
@@ -20,6 +20,8 @@ Unlike run_windows.py this does not compile benchmarks or trace them with PIN: i
 takes ChampSim traces you already have (SPEC .xz traces, or traces made earlier).
 
 Examples (PowerShell, from the repo root):
+  python champsim\\run_knob_tuning_windows.py --trace 605.mcf_s-1554B      (looked up in ~/spec-traces)
+  python champsim\\run_knob_tuning_windows.py --all --trace-dir D:\\traces
   python champsim\\run_knob_tuning_windows.py --trace C:\\traces\\605.mcf_s-1554B.champsimtrace.xz
   python champsim\\run_knob_tuning_windows.py --trace a.trace b.trace --budget 30 --seeds 3
   python champsim\\run_knob_tuning_windows.py --trace k_stencil.trace --exhaustive --jobs 8
@@ -67,6 +69,18 @@ def kernel_name(trace):
     return re.sub(r"\.(champsimtrace|trace|champsim)?(\.xz)?$", "", Path(trace).name)
 
 
+def find_trace(name, trace_dir):
+    """A path, or a bare name (605.mcf_s-1554B) resolved inside trace_dir."""
+    direct = Path(name).expanduser()
+    if direct.is_file():
+        return direct
+    for suffix in ("", ".champsimtrace.xz", ".champsimtrace", ".trace", ".xz"):
+        cand = trace_dir / (name + suffix)
+        if cand.is_file():
+            return cand
+    fail(f"Trace not found: {name} (also looked in {trace_dir}). Download with champsim\\download_spec_traces.ps1.")
+
+
 # ---- 1. preflight ---------------------------------------------------------------------
 def preflight(traces):
     if os.name != "nt":
@@ -83,8 +97,7 @@ def preflight(traces):
         import numpy  # noqa: F401  (knob_carbs.py needs it)
     except ImportError:
         fail("numpy is missing. Run: python -m pip install numpy")
-    if any(str(t).endswith(".xz") for t in traces):
-        command_path("xz", "ChampSim reads .xz traces through xz. Install xz, or decompress the trace with 7-Zip first.")
+    # .xz traces need no external xz: ChampSim decompresses them with its built-in lzma support.
     runtime = SOURCE_WINDOWS / "vcpkg_installed" / "x64-windows" / "bin"
     if not runtime.is_dir():
         fail(f"vcpkg runtime DLLs not found: {runtime}. Build ChampSim's vcpkg dependencies first "
@@ -106,12 +119,6 @@ def build(build_dir, rebuild):
     modules = build_dir / "knobbed_modules"
     shutil.rmtree(modules, ignore_errors=True)
     shutil.copytree(MODULES, modules)
-    # Skip modules the source tree already ships under the same path (source-windows has
-    # prefetcher/tage as well as modules/prefetcher/tage); the linker would see them twice.
-    for kind in modules.iterdir():
-        for module in list(kind.iterdir()) if kind.is_dir() else []:
-            if (build_dir / kind.name / module.name).is_dir():
-                shutil.rmtree(module)
     for stale in (".csconfig", "inc/cache_modules.h", "inc/ooo_cpu_modules.h"):
         path = build_dir / stale
         if path.is_dir():
@@ -184,7 +191,11 @@ def report(directory, no_plots):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--trace", nargs="+", help="one or more ChampSim traces (.xz or plain)")
+    parser.add_argument("--trace", nargs="+",
+                        help="ChampSim traces: paths, or bare names like 605.mcf_s-1554B looked up in --trace-dir")
+    parser.add_argument("--trace-dir", default=str(Path.home() / "spec-traces"),
+                        help="where download_spec_traces.ps1 puts traces (default ~/spec-traces)")
+    parser.add_argument("--all", action="store_true", help="tune on every *.champsimtrace.xz in --trace-dir")
     parser.add_argument("--out", help="results directory (default champsim/results/knob-carbs-windows)")
     parser.add_argument("--budget", type=int, default=20, help="evaluations per tuner run")
     parser.add_argument("--seeds", type=int, default=2)
@@ -205,12 +216,16 @@ def main():
     if args.report_only:
         report(args.report_only, args.no_plots)
         return
-    if not args.trace:
-        parser.error("--trace is required (or use --report-only DIR)")
-    traces = [Path(t).expanduser().resolve() for t in args.trace]
-    for trace in traces:
-        if not trace.is_file():
-            fail(f"Trace not found: {trace}")
+    trace_dir = Path(args.trace_dir).expanduser()
+    if args.all:
+        traces = sorted(trace_dir.glob("*.champsimtrace.xz"))
+        if not traces:
+            fail(f"No *.champsimtrace.xz files in {trace_dir}")
+    elif args.trace:
+        traces = [find_trace(t, trace_dir) for t in args.trace]
+    else:
+        parser.error("--trace or --all is required (or use --report-only DIR)")
+    traces = [Path(t).resolve() for t in traces]
     build_dir = Path(args.build_dir)
     if " " in str(build_dir):
         fail(f"--build-dir must not contain spaces: {build_dir}")
