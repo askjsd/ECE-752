@@ -3,22 +3,27 @@
 //
 //   Section 0 telemetry   -> struct telemetry (accuracy / coverage / timeliness
 //                            plus the early-and-hurtful signal)
-//   Section 1 "when"      -> enable, trigger mode, distance, degree, throttling
-//   Section 2 "where"     -> confidence-based fill level, insertion hint
-//   Section 3.1 "what"    -> next-line vs per-PC learned stride, confirmation
+//   Section 1 "when"      -> trigger mode, aggressiveness ladder (distance+degree), throttling
+//   Section 2 "where"     -> fill policy (which level a prefetch fills); insertion position
+//                            is a separate replacement module (lru_pf) read from KNOBBED_INSERT
+//   Section 3 "what"      -> engine: off | next-line | per-PC stride | Markov, confirmation,
+//                            next-line fallback
 //
 // Each region of the address space can carry its own hint (the "region hints"
 // a compiler or static tuner would emit). Addresses outside every region use
 // the default hint. A hint is only a *starting point*: when throttling is on,
-// a per-region feedback controller adjusts distance and degree each epoch from
-// the measured telemetry.
+// a per-region feedback controller can step the aggressiveness level down (and back
+// up, never above the hint) each epoch from the measured telemetry.
 #ifndef KNOBBED_PREFETCHER_H
 #define KNOBBED_PREFETCHER_H
 
 #include <cstdint>
 #include <deque>
+#include <iterator>
+#include <list>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "address.h"
@@ -28,32 +33,55 @@
 
 namespace knobbed_pf
 {
-enum class trigger_mode : uint8_t { MISS = 0, MISS_TAGGED = 1, ACCESS = 2, DEAD_BLOCK = 3 /* reserved: not implemented */ };
-enum class stride_source : uint8_t { NEXT_LINE = 0, PER_PC = 1 };
-enum class insertion_pos : uint8_t { MRU = 0, MID = 1, LRU = 2 }; // carried in prefetch metadata only
+// DEAD_BLOCK was removed: it behaved exactly like MISS and so gave MISS two codes.
+enum class trigger_mode : uint8_t { MISS = 0, MISS_TAGGED = 1, ACCESS = 2 };
+// The engine that predicts addresses. OFF is "prefetching disabled" (it replaces a
+// separate enable bit so the 2-bit field has exactly 4 values and no aliases).
+// MARKOV is a miss-to-miss correlation table: it follows a repeated irregular
+// sequence such as a linked list that is walked more than once.
+enum class stride_source : uint8_t { OFF = 0, NEXT_LINE = 1, PER_PC = 2, MARKOV = 3 };
+// Which cache level a prefetch fills. ChampSim only offers "this level" or "the next
+// level down", so the policy is: always this level, this level only when the
+// confidence is high enough (two thresholds), or always the next level down.
+enum class fill_policy : uint8_t { ALWAYS_L1D = 0, GATED_LOW = 1, GATED_HIGH = 2, ALWAYS_L2 = 3 };
+constexpr double GATED_LOW_THRESHOLD = 0.34;  // confidence needed to fill this level under GATED_LOW
+constexpr double GATED_HIGH_THRESHOLD = 0.67; // ... under GATED_HIGH
+
+// One rung of the aggressiveness ladder: how far ahead (distance, in strides or
+// chain links) and how many blocks per trigger (degree). Level 0 is the gentlest.
+struct rung {
+  uint8_t distance;
+  uint8_t degree;
+};
+// The ladder differs per engine. Stride/next-line distances stop at 8 because the
+// page limit (64 lines) cuts off anything further. Markov distance means "chain
+// links skipped", and chains longer than a few links rarely exist, so its ladder
+// stays short.
+const rung& ladder_rung(stride_source source, int level);
+constexpr int LADDER_LEVELS = 8;
 
 // Section 4 of prefetcher_knobs.md. Every field here is runtime-changeable.
 struct hint {
-  bool enable = true;
-  trigger_mode trigger = trigger_mode::MISS_TAGGED;
   stride_source source = stride_source::PER_PC;
-  uint8_t confirm = 2;  // matching strides needed before issuing (PER_PC)
-  uint8_t distance = 1; // blocks ahead of the trigger (stride steps)
-  uint8_t degree = 2;   // blocks issued per trigger
-  double fill_thresh = 0.5; // confidence >= this: fill this cache level
-  double drop_thresh = 0.1; // confidence <  this: do not prefetch at all
-  insertion_pos insertion = insertion_pos::MRU;
-  bool throttle = true; // let the runtime learner adjust distance/degree
+  trigger_mode trigger = trigger_mode::MISS_TAGGED;
+  uint8_t confirm = 2; // 1 or 2: matching strides / repeats needed before issuing (PER_PC, MARKOV)
+  uint8_t level = 1;   // aggressiveness ladder level 0-7 (distance and degree come from the ladder)
+  fill_policy fill = fill_policy::GATED_LOW;
+  bool throttle = true;   // let the runtime controller step the level down (never above `level`)
+  bool fallback = false;  // when the engine has nothing to issue, send a small next-line prefetch to the next level
 
-  // Packed 32-bit control word (bit widths follow section 4 of the knob doc).
-  //  [0]     enable            [1:2]  trigger        [3]    source
-  //  [4:8]   distance (0-31)   [9:11] degree-1 (0-7) [12:14] fill thr (/7)
-  //  [15:17] drop thr (/7)     [18:19] insertion     [20]   throttle
-  //  [21:22] confirm-1 (0-3)
+  uint8_t distance() const { return ladder_rung(source, level).distance; }
+  uint8_t degree() const { return ladder_rung(source, level).degree; }
+
+  // Packed 32-bit control word (used as prefetch metadata and by `word=`).
+  //  [1:0] source   [3:2] trigger (0-2)   [4] confirm-1   [7:5] level
+  //  [9:8] fill     [10] throttle         [11] fallback
   uint32_t to_word() const;
+  // False for a word with a code that means nothing (trigger 3).
+  static bool word_valid(uint32_t word);
   static hint from_word(uint32_t word);
-  // "key=value,key=value": enable trigger source confirm distance degree
-  // fill drop insert throttle word. Returns false (and a message) on error.
+  // "key=value,key=value": source trigger confirm level fill throttle fallback word.
+  // Returns false (and a message) on error.
   bool apply(const std::string& spec, std::string* error);
 };
 
@@ -84,6 +112,59 @@ struct telemetry {
   double timeliness() const { return useful() ? static_cast<double>(useful_timely + useful_lower) / static_cast<double>(useful()) : 1.0; }
 };
 
+// A map from block number to V that remembers insertion order, so the *oldest*
+// entry can be dropped when it is full or too old (std::unordered_map::begin()
+// is not the oldest, and std::map::begin() is the lowest address). put() makes an
+// entry the newest, whether it is new or replaces an old one, so the same class
+// gives FIFO (never re-put) or LRU (re-put on use).
+template <typename V>
+class fifo_map
+{
+public:
+  explicit fifo_map(std::size_t capacity) : cap_(capacity) {}
+  V* find(uint64_t k)
+  {
+    auto it = idx_.find(k);
+    return it == idx_.end() ? nullptr : &it->second->second;
+  }
+  bool contains(uint64_t k) const { return idx_.count(k) != 0; }
+  std::size_t size() const { return idx_.size(); }
+  // `v` is taken by value so it may be a copy of an entry this call replaces.
+  void put(uint64_t k, V v)
+  {
+    erase(k);
+    items_.emplace_back(k, std::move(v));
+    idx_[k] = std::prev(items_.end());
+    if (idx_.size() > cap_) { // over capacity: drop the oldest
+      idx_.erase(items_.front().first);
+      items_.pop_front();
+    }
+  }
+  bool erase(uint64_t k)
+  {
+    auto it = idx_.find(k);
+    if (it == idx_.end())
+      return false;
+    items_.erase(it->second);
+    idx_.erase(it);
+    return true;
+  }
+  // Drop oldest entries while `stale(value)` is true (entries are in age order).
+  template <typename F>
+  void expire_oldest(F stale)
+  {
+    while (!items_.empty() && stale(items_.front().second)) {
+      idx_.erase(items_.front().first);
+      items_.pop_front();
+    }
+  }
+
+private:
+  std::size_t cap_;
+  std::list<std::pair<uint64_t, V>> items_;
+  std::unordered_map<uint64_t, typename std::list<std::pair<uint64_t, V>>::iterator> idx_;
+};
+
 struct region {
   uint64_t start = 0; // byte addresses, [start, end)
   uint64_t end = UINT64_MAX;
@@ -99,12 +180,9 @@ struct throttle_params {
   uint64_t epoch_accesses = 4096; // demand accesses to a region per epoch
   uint64_t min_issued = 16;       // do not adjust on too little evidence
   double acc_floor = 0.10;        // below: suspend the prefetcher for a while
-  double acc_low = 0.40;          // below: reduce degree
-  double acc_high = 0.75;         // above (and not late/early): raise degree
-  double late_high = 0.10;        // late / useful above: raise distance
-  double early_high = 0.30;       // unused-evicted / issued above: lower distance
-  uint8_t max_distance = 31;
-  uint8_t max_degree = 8;
+  double acc_low = 0.40;          // below: step the ladder level down
+  double acc_high = 0.75;         // above (and not early/hurtful): step the level back up, never above the configured level
+  double early_high = 0.30;       // unused-evicted + early-hurtful / issued above: step the level down
   uint32_t suspend_epochs = 4;
 };
 } // namespace knobbed_pf
@@ -143,6 +221,14 @@ struct knobbed : public champsim::modules::prefetcher {
   // Which region issued a prefetch we are tracking.
   struct tracked_block {
     std::size_t region_idx;
+    uint64_t born = 0; // value of `now` when the prefetch was issued (used to expire stale in-flight entries)
+  };
+
+  // Miss-correlation table row: after a miss on block K the next miss was
+  // `next`. `conf` counts how often that successor repeated (0-3).
+  struct markov_entry {
+    uint64_t next = 0;
+    int conf = 0;
   };
 
   // Structural parameters: fixed per experiment, not part of the hint word.
@@ -151,17 +237,28 @@ struct knobbed : public champsim::modules::prefetcher {
   constexpr static std::size_t PENDING_MAX = 64;   // candidate queue depth
   constexpr static std::size_t TRACK_MAX = 4096;   // cap on each tracking map below
   constexpr static std::size_t EVICTED_MAX = 256;  // how long evicted-unused blocks are remembered
+  constexpr static int FALLBACK_DEGREE = 2;         // next-line blocks sent by the fallback
+  constexpr static std::size_t MARKOV_MAX = 1 << 16; // correlation table size (entries)
+  constexpr static uint64_t INFLIGHT_EXPIRE = 2000;  // cycles after which an unfilled prefetch stops counting as in flight
+  constexpr static uint64_t LOWER_EXPIRE = 100000;   // cycles after which a lower-level prefetch is assumed evicted there
 
   champsim::msl::lru_table<tracker_entry> table{TRACKER_SETS, TRACKER_WAYS}; // per-PC stride table
   std::vector<knobbed_pf::region> regions; // regions[0] is the default hint
   knobbed_pf::throttle_params tp;          // throttle thresholds (same for every region)
   std::deque<candidate> pending;           // queued prefetches, issued one per cycle
+  knobbed_pf::fifo_map<markov_entry> markov{MARKOV_MAX}; // miss block -> following miss block (LRU: refreshed on every training update)
+  std::unordered_set<uint64_t> pending_blocks;      // blocks currently in `pending`, to avoid queueing duplicates
+  uint64_t last_miss = 0;                  // previous miss (or first use of a prefetched block)
+  bool have_last_miss = false;
+  uint64_t now = 0;                        // cycles seen by prefetcher_cycle_operate()
+  bool in_warmup = true;                   // lets us reset the totals when ChampSim ends warmup (it resets its own stats then)
 
   // Block-number -> issuing region. Together these classify every prefetch's
   // outcome (the keys are cache-line numbers, not byte addresses):
-  std::unordered_map<uint64_t, tracked_block> inflight;       // issued to this level, fill not seen yet
-  std::unordered_map<uint64_t, tracked_block> resident;       // filled by a prefetch, not yet used
-  std::unordered_map<uint64_t, tracked_block> lower_tracked;  // sent to a lower level only
+  // inflight and lower_tracked also age out by cycle count (see prefetcher_cycle_operate).
+  knobbed_pf::fifo_map<tracked_block> inflight{TRACK_MAX};      // issued to this level, fill not seen yet
+  knobbed_pf::fifo_map<tracked_block> resident{TRACK_MAX};      // filled by a prefetch, not yet used
+  knobbed_pf::fifo_map<tracked_block> lower_tracked{TRACK_MAX}; // sent to a lower level only
   std::unordered_map<uint64_t, tracked_block> evicted_unused; // evicted unused, remembered briefly
   std::deque<uint64_t> evicted_order;                         // FIFO order for evicted_unused
 
