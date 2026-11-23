@@ -40,7 +40,7 @@ Takeaways (v2):
 - The winning engine differs per trace: next-line on most, **Markov on `mcf_s-1554B`** (level 6, fill high, fallback on, insert LRU), always-to-L2 fill on `gcc` and `lbm`. One fixed default cannot cover them.
 - Tuners: CARBS finished best on 4 traces (`gcc`, `mcf_s-1554B`, `omnetpp_s-874B`, `roms`), hill-climb on 3 (`xalancbmk`, `fotonik3d`, and `mcf_s-1536B` by a hair), random on 2 (`lbm` x2), one tie. Random search was far behind on `mcf` (1.30x vs 1.88x and 1.70x vs 2.11x); CARBS was 8% behind on `xalancbmk`. Two seeds is too few to call a winner.
 - Bad settings still hurt: the worst sampled config was up to 33% slower than prefetch off (`mcf_s-1536B`) and 14% on `omnetpp`.
-- Summary table: `champsim/spec_char/knob_tuning_v2_summary.csv`. Raw results (gitignored): `champsim/results/knob-carbs-spec-v2/`.
+- Summary table: `champsim/spec_char/knob_tuning_v2_summary.csv`; bar chart: `champsim/spec_char/knob_tuning_v2_speedup.png`. Raw results (gitignored): `champsim/results/knob-carbs-spec-v2/`.
 
 ### V1 (history): first knob space, before the telemetry fixes
 
@@ -145,18 +145,21 @@ All commands run from the repo root (`ece 752/`). Steps 1-3 are one-time setup.
 
 ## Windows (untested)
 
-Nothing in this file has been run on Windows. `champsim/run_knob_tuning_windows.ps1` is one script
-that does the whole thing (build + tune + table); it is a translation of the Linux steps, using the
-same toolchain as `run_windows.ps1` (clang, GNU make, the vcpkg DLLs, python).
+Nothing in this section has been run on Windows. `champsim/run_knob_tuning_windows.py` is one script
+that does the whole thing (preflight, build, tune each trace, tuner tests, table and plot). It follows
+the same structure and build commands as `run_windows.py` / `run_windows.ps1` (clang, GNU make, the vcpkg DLLs).
+It does not compile or trace benchmarks: it takes ChampSim traces you already have.
+`run_knob_tuning_windows.ps1` is an equivalent PowerShell version for one trace.
 
-1. Install the prerequisites (same as `run_windows.ps1`, plus numpy and, for `.xz` traces, xz):
-   `python -m pip install numpy`
-2. Run it from the repo root in PowerShell (the first run builds, which takes a few minutes):
-   `.\champsim\run_knob_tuning_windows.ps1 -Trace C:\traces\605.mcf_s-1554B.champsimtrace.xz`
-3. Optional: add `-Exhaustive -Jobs 8` for the ground-truth sweep, `-Budget`/`-Seeds` to change the search,
-   `-Rebuild` to force a rebuild, or `-SummarizeOnly -Output <folder>` to print a table.
+1. Install the prerequisites (same as `run_windows.py`, plus numpy and, for `.xz` traces, xz; matplotlib is optional, for the plot):
+   `python -m pip install numpy matplotlib`
+2. Run it from the repo root (the first run builds, which takes a few minutes):
+   `python champsim\run_knob_tuning_windows.py --trace C:\traces\605.mcf_s-1554B.champsimtrace.xz`
+3. Options: several traces (`--trace a.xz b.xz`), `--budget` and `--seeds` for the search, `--exhaustive --jobs 8` for the
+   ground-truth sweep, `--rebuild`, `--skip-tests`, `--no-plots`, and `--report-only <results folder>` to print the table
+   and draw `speedup.png` for existing results (this mode works on any OS and was tested on Linux).
 
-What the script does differently from Linux, and what could still go wrong:
+What differs from Linux, and what could still go wrong:
 - **Builds in `C:\champsim-knobbed-win`.** ChampSim's Makefile breaks on spaces and this repo's folder is `ece 752`. The script copies `source-windows` and `modules` there (like `build_knobbed.sh` does on Linux).
 - **Needs `source-windows\vcpkg_installed`**, which is not in git. If the dependency build was never done on that machine, nothing links.
 - **Build flags are copied from `run_windows.ps1`** (`CXX=clang++ CXXFLAGS=-Wno-c++11-narrowing -fms-runtime-lib=dll LDLIBS=-lshell32`). The new modules use only standard C++ and 64-bit integer types, so Windows' 32-bit `long` should not matter, but this has never been compiled with clang on Windows. The Linux build of the same sources works.
