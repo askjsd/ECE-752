@@ -15,10 +15,9 @@ override PREFETCH_ROOT += $(addsuffix /prefetcher,$(MODULE_ROOT))
 override REPLACEMENT_ROOT += $(addsuffix /replacement,$(MODULE_ROOT))
 
 # vcpkg integration
-TRIPLET_DIR = $(patsubst %/,%,$(firstword $(filter-out $(ROOT_DIR)/vcpkg_installed/vcpkg/, $(wildcard $(ROOT_DIR)/vcpkg_installed/*/))))
 override CPPFLAGS += -I$(OBJ_ROOT)
 override LDFLAGS  += -L$(TRIPLET_DIR)/lib -L$(TRIPLET_DIR)/lib/manual-link
-override LDLIBS   += -lCLI11 -llzma -llibz -lbz2 -lfmt
+override LDLIBS   += 
 
 .PHONY: all clean compile_commands compile_commands_clean configclean test pytest maketest
 
@@ -29,7 +28,7 @@ prereq_for_generated:=
 
 # List all subdirectories of a given directory
 # $1 - parent directory
-ls_dirs = $(patsubst %/,%,$(filter %/,$(wildcard $1/*/)))
+ls_dirs = $(filter-out %. %..,$(patsubst %/,%,$(filter %/,$(wildcard $1/*/))))
 
 # Expands to the given legacy file if the module folder contains a file named "__legacy__"
 # $1 - path to search
@@ -90,7 +89,6 @@ parent_dir = $(patsubst %/,%,$(dir $1))
 
 .DEFAULT_GOAL := all
 
-generated_files = $(OBJ_ROOT)/module_decl.inc $(OBJ_ROOT)/legacy_bridge.h
 module_dirs = $(foreach d,$(BRANCH_ROOT) $(BTB_ROOT) $(PREFETCH_ROOT) $(REPLACEMENT_ROOT),$(call relative_path,$(abspath $d),$(ROOT_DIR)))
 
 # Remove all intermediate files
@@ -127,7 +125,7 @@ endef
 # All .d files should be preprocessed only
 DEPFLAGS = -MM -MT $@ -MT $(@:.d=.o)
 define dep_recipe
-	$(CXX) $(attach_options) $(DEPFLAGS) $(CPPFLAGS) -MF $@ $<
+	@touch $@
 endef
 
 ### Module support
@@ -195,14 +193,10 @@ ifeq (,$(OBJ_ROOT))
 	$(error The value of OBJ_ROOT cannot be empty)
 endif
 
-# Get prerequisites for module_decl.inc
 # $1 - object file paths
-module_decl_prereqs = $(foreach mod,$(call get_module_src_dir,$1),$(call maybe_legacy_file,$(mod),legacy_bridge.inc))
-$(OBJ_ROOT)/module_decl.inc: $$(call module_decl_prereqs,$$(dir $(base_module_objs)) $$(prereq_for_generated)) | $$(dir $$@)
-	@$(call include_sequence_lines, CHAMPSIM_LEGACY_MODULE_DECL)
 
 legacy_bridge_prereqs = $(foreach mod,$(call get_module_src_dir,$1),$(call maybe_legacy_file,$(mod),legacy_bridge.h))
-$(OBJ_ROOT)/legacy_bridge.h: $$(call legacy_bridge_prereqs,$$(dir $(base_module_objs)) $$(prereq_for_generated)) | $$(dir $$@)
+$(OBJ_ROOT)/legacy_bridge.h: $$(call legacy_bridge_prereqs,$$(dir $(filter-out %/prefetcher/tage/tage.o,$(filter-out %/prefetcher/tage/tage.o,$(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(base_module_objs))))) $$(prereq_for_generated)) | $$(dir $$@)
 	@$(call include_sequence_lines, CHAMPSIM_LEGACY_BRIDGE)
 
 # Generated configuration makefile contains:
@@ -237,14 +231,12 @@ $(OBJ_ROOT)/%.o: $$(base_nonmain_prereqs) | $(@:$(OBJ_ROOT)/%.o=$(DEP_ROOT)/%.d)
 $(DEP_ROOT)/%.d: $$(base_nonmain_prereqs) | $(generated_files) $$(dir $$@)
 	$(dep_recipe)
 
-# Connect the test main to the test/cpp/src/ directory
 test_main_prereqs = $(test_source_dir)/000-test-main.cc $(base_options)
 $(OBJ_ROOT)/test/TEST_000-test-main.o: $(test_main_prereqs) | $(@:$(OBJ_ROOT)/%.o=$(DEP_ROOT)/%.d) $$(dir $$@)
 	$(obj_recipe)
 $(DEP_ROOT)/test/TEST_000-test-main.d: $(test_main_prereqs) | $(generated_files) $$(dir $$@)
 	$(dep_recipe)
 
-# Connect non-main test sources to the test/cpp/src/ drirctory
 test_nonmain_prereqs = $(test_source_dir)/$*.cc $(base_options)
 $(OBJ_ROOT)/test/%.o: $$(test_nonmain_prereqs) | $(@:$(OBJ_ROOT)/%.o=$(DEP_ROOT)/%.d) $$(dir $$@)
 	$(obj_recipe)
@@ -291,8 +283,8 @@ $(test_main_name): override CXXFLAGS += -g3 -Og
 $(test_main_name): override LDLIBS += -lCatch2Main -lCatch2
 
 # Associate objects with executables
-$(test_main_name): $(call get_base_objs,TEST) $(test_base_objs) $(base_module_objs) $(nonbase_module_objs) | $$(dir $$@)
-$(executable_name): $(call get_base_objs,$$(build_id)) $(base_module_objs) $(nonbase_module_objs) | $$(dir $$@)
+$(test_main_name): $(call get_base_objs,TEST) $(test_base_objs) $(filter-out %/prefetcher/tage/tage.o,$(filter-out %/prefetcher/tage/tage.o,$(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(base_module_objs)))) $(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(nonbase_module_objs)) | $$(dir $$@)
+$(executable_name): $(call get_base_objs,$$(build_id)) $(filter-out %/prefetcher/tage/tage.o,$(filter-out %/prefetcher/tage/tage.o,$(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(base_module_objs)))) $(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(nonbase_module_objs)) | $$(dir $$@)
 
 # Link main executables
 $(executable_name) $(test_main_name):
@@ -332,12 +324,20 @@ pytest:
 	PYTHONPATH=$(PYTHONPATH):$(ROOT_DIR) python3 -m unittest discover -v --start-directory='test/python'
 
 ifeq (,$(filter clean compile_commands compile_commands_clean configclean pytest maketest, $(MAKECMDGOALS)))
--include $(patsubst $(OBJ_ROOT)/%.o,$(DEP_ROOT)/%.d,$(foreach build_id,TEST $(build_ids),$(call get_base_objs,$(build_id))) $(test_base_objs) $(base_module_objs))
+-include $(patsubst $(OBJ_ROOT)/%.o,$(DEP_ROOT)/%.d,$(foreach build_id,TEST $(build_ids),$(call get_base_objs,$(build_id))) $(test_base_objs) $(filter-out %/prefetcher/tage/tage.o,$(filter-out %/prefetcher/tage/tage.o,$(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(base_module_objs)))))
 endif
 
 ifeq (maketest,$(findstring maketest,$(MAKECMDGOALS)))
 include $(ROOT_DIR)/test/make/Makefile.test
 endif
 
-.NOTINTERMEDIATE: $(dir $(base_module_objs) $(nonbase_module_objs))
-#.SECONDARY: $(call maybe_legacy_file,$(call get_module_src_dir,$(dir $(base_module_objs) $(nonbase_module_objs))),legacy_bridge.cc legacy_bridge.h legacy_bridge.inc function_patch.options legacy.options)
+.NOTINTERMEDIATE: $(dir $(filter-out %/prefetcher/tage/tage.o,$(filter-out %/prefetcher/tage/tage.o,$(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(base_module_objs)))) $(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(nonbase_module_objs)))
+#.SECONDARY: $(call maybe_legacy_file,$(call get_module_src_dir,$(dir $(filter-out %/prefetcher/tage/tage.o,$(filter-out %/prefetcher/tage/tage.o,$(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(base_module_objs)))) $(filter-out .csconfig/modules/prefetcher\tage/tage.o .csconfig/modules/prefetcher/tage/tage.o,$(nonbase_module_objs)))),legacy_bridge.cc legacy_bridge.h legacy_bridge.inc function_patch.options legacy.options)
+
+LDLIBS   += -lfmt-c
+
+
+# vcpkg Windows dependencies & generated module_decl.inc
+override CPPFLAGS += -Ivcpkg_installed/x64-windows/include -I.csconfig
+override CXXFLAGS += -Ivcpkg_installed/x64-windows/include -I.csconfig
+override LDLIBS   += vcpkg_installed/x64-windows/lib/bz2.lib vcpkg_installed/x64-windows/lib/Catch2.lib vcpkg_installed/x64-windows/lib/CLI11.lib vcpkg_installed/x64-windows/lib/fmt-c.lib vcpkg_installed/x64-windows/lib/fmt.lib vcpkg_installed/x64-windows/lib/libz.lib vcpkg_installed/x64-windows/lib/lzma.lib

@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""Run the knobbed-prefetcher tuning workflow on native Windows.
-
-*** UNTESTED on Windows. *** Written on Linux in the same shape as run_windows.py
-(preflight checks, optional build, one run per input, tests, report), reusing the
-build commands from run_windows.py / run_windows.ps1. The Linux version of every
-step is tested; the --report-only mode below works on any OS and was tested.
+r"""Run the knobbed-prefetcher tuning workflow on native Windows.
 
 Stages, per run:
   1. preflight   python + numpy, clang, make, vcpkg DLLs (no xz.exe needed: ChampSim reads .xz itself)
   2. build       copy source-windows + champsim/modules to a path WITHOUT spaces
-                 (ChampSim's Makefile breaks on spaces; "ece 752" has one) and build
-                 champsim_knobbed.exe from champsim_config_knobbed.json
+                 (ChampSim's Makefile breaks on spaces; "ECE-752" has none, "ece 752" does)
+                 and build champsim_knobbed.exe (or champsim_knobbed) from champsim_config_knobbed.json
   3. tune        champsim/knob_carbs.py on every trace: CARBS, random search and hill
                  climbing over the prefetcher knobs (optionally an exhaustive sweep first)
   4. tests       flagbench/test_tuners.py (the tuners themselves are unchanged)
@@ -20,12 +15,12 @@ Unlike run_windows.py this does not compile benchmarks or trace them with PIN: i
 takes ChampSim traces you already have (SPEC .xz traces, or traces made earlier).
 
 Examples (PowerShell, from the repo root):
-  python champsim\\run_knob_tuning_windows.py --trace 605.mcf_s-1554B      (looked up in ~/spec-traces)
-  python champsim\\run_knob_tuning_windows.py --all --trace-dir D:\\traces
-  python champsim\\run_knob_tuning_windows.py --trace C:\\traces\\605.mcf_s-1554B.champsimtrace.xz
-  python champsim\\run_knob_tuning_windows.py --trace a.trace b.trace --budget 30 --seeds 3
-  python champsim\\run_knob_tuning_windows.py --trace k_stencil.trace --exhaustive --jobs 8
-  python champsim\\run_knob_tuning_windows.py --report-only champsim\\results\\knob-carbs-spec-v2
+  python champsim\run_knob_tuning_windows.py --rebuild --trace 605.mcf_s-1554B
+  python champsim\run_knob_tuning_windows.py --all --trace-dir D:\traces
+  python champsim\run_knob_tuning_windows.py --trace C:\traces\605.mcf_s-1554B.champsimtrace.xz
+  python champsim\run_knob_tuning_windows.py --trace a.trace b.trace --budget 30 --seeds 3
+  python champsim\run_knob_tuning_windows.py --trace k_stencil.trace --exhaustive --jobs 8
+  python champsim\run_knob_tuning_windows.py --report-only champsim\results\knob-carbs-spec-v2
 """
 
 import argparse
@@ -34,6 +29,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import statistics
 import subprocess
 import sys
@@ -46,6 +42,7 @@ MODULES = CHAMPSIM / "modules"
 CONFIG = CHAMPSIM / "champsim_config_knobbed.json"
 TUNER = CHAMPSIM / "knob_carbs.py"
 LLVM_BIN = Path(r"C:\Program Files\LLVM\bin")
+TRACE_SUFFIXES = (".champsimtrace.xz", ".champsimtrace", ".trace.xz", ".trace", ".xz")
 
 
 def fail(message):
@@ -54,14 +51,46 @@ def fail(message):
 
 def command_path(name, hint):
     path = shutil.which(name)
-    if not path:
-        fail(f"{name} was not found on PATH. {hint}")
-    return Path(path)
+    if path:
+        return Path(path)
+    if name in ("clang", "clang++"):
+        candidate = LLVM_BIN / f"{name}.exe"
+        if candidate.is_file():
+            return candidate
+    fail(f"{name} was not found on PATH. {hint}")
 
 
 def run_stage(label, args, cwd=None, env=None):
     print(f"\n== {label}", flush=True)
     subprocess.run([str(a) for a in args], cwd=cwd, env=env, check=True)
+
+
+def copy_overwrite_readonly(src, dst):
+    """shutil.copy2 wrapper that clears Windows read-only bits before overwriting."""
+    if os.path.exists(dst):
+        try:
+            os.chmod(dst, stat.S_IWRITE | stat.S_IREAD)
+        except OSError:
+            pass
+    return shutil.copy2(src, dst)
+
+
+def rmtree_force(path):
+    """Remove a directory tree even if files inside have the Windows read-only attribute."""
+    if not os.path.exists(path):
+        return
+
+    def _on_error(func, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+            func(p)
+        except OSError:
+            pass
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_on_error)
+    else:
+        shutil.rmtree(path, onerror=_on_error)
 
 
 def kernel_name(trace):
@@ -74,25 +103,127 @@ def find_trace(name, trace_dir):
     direct = Path(name).expanduser()
     if direct.is_file():
         return direct
-    for suffix in ("", ".champsimtrace.xz", ".champsimtrace", ".trace", ".xz"):
+    for suffix in ("", *TRACE_SUFFIXES):
         cand = trace_dir / (name + suffix)
         if cand.is_file():
             return cand
     fail(f"Trace not found: {name} (also looked in {trace_dir}). Download with champsim\\download_spec_traces.ps1.")
 
 
+def install_win_shims(build_dir):
+    """Create cmd.exe wrappers (python3.cmd, mkdir.cmd) for GNU Make's Windows shell mode."""
+    shim_dir = build_dir / ".win_shims"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    py_win = str(Path(sys.executable).resolve())
+
+    cmd_shim = shim_dir / "python3.cmd"
+    cmd_shim.write_bytes(f'@echo off\r\n"{py_win}" %*\r\n'.encode("utf-8"))
+
+    # Handle Unix-style `mkdir -p dir1 dir2` inside cmd.exe Makefile recipes
+    mkdir_shim = shim_dir / "mkdir.cmd"
+    mkdir_shim.write_bytes(
+        b"@echo off\r\n"
+        b":loop\r\n"
+        b'if "%~1"=="" goto :eof\r\n'
+        b'if /i "%~1"=="-p" (shift & goto :loop)\r\n'
+        b'set "d=%~1"\r\n'
+        b'set "d=%d:/=\\%"\r\n'
+        b'if not exist "%d%" md "%d%" 2>nul\r\n'
+        b"shift\r\n"
+        b"goto :loop\r\n"
+    )
+    return shim_dir
+
+
+def patch_native_windows_makefile(build_dir):
+    """Ensure native Windows clang++/lld-link compatibility in the copied Makefile."""
+    (build_dir / "bin").mkdir(parents=True, exist_ok=True)
+    (build_dir / "test" / "bin").mkdir(parents=True, exist_ok=True)
+
+    mk_files = [build_dir / "Makefile", build_dir / "_configuration.mk"]
+    csconfig = build_dir / ".csconfig"
+    if csconfig.is_dir():
+        mk_files.extend(sorted(csconfig.glob("*.mk")))
+
+    found_main_mk = False
+    for mk_path in mk_files:
+        if not mk_path.is_file():
+            continue
+        if mk_path.name == "Makefile" and mk_path.parent == build_dir:
+            found_main_mk = True
+        text = mk_path.read_text(encoding="utf-8", errors="replace")
+
+        # 0. Avoid trailing-slash directory target/prerequisite `bin\` in GNU Make on Windows
+        text = text.replace("$(BIN_ROOT)/", "$(BIN_ROOT)")
+        text = re.sub(r"(?<=\s)bin\\(?=\s|$)", " ", text)
+        text = text.replace("$(BIN_ROOT)\\champsim_knobbed", "$(BIN_ROOT)/champsim_knobbed")
+        text = text.replace("bin\\champsim_knobbed", "bin/champsim_knobbed")
+
+        # 1. Disable broken .d dependency generation (-MM) with @touch $@
+        text = re.sub(
+            r"\$\(CXX\)\s+\$\(attach_options\)\s+\$\(DEPFLAGS\)\s+\$\(CPPFLAGS\)\s+-MF\s+\$@\s+\$<",
+            "@touch $@",
+            text,
+        )
+
+        # 2. Filter out duplicate stock prefetcher tage.o when knobbed_modules prefetcher tage is built
+        for var in ("base_module_objs", "nonbase_module_objs"):
+            filtered = (
+                f"$(filter-out .csconfig/modules/prefetcher\\tage/tage.o "
+                f".csconfig/modules/prefetcher/tage/tage.o,$({var}))"
+            )
+            if filtered not in text:
+                text = text.replace(f"$({var})", filtered)
+
+        # 3. Remove bare -l flags that clash with explicit vcpkg .lib paths on lld-link
+        text = re.sub(r"\s*-lCLI11\s+-llzma\s+-llibz\s+-lbz2\s+-lfmt", "", text)
+
+        mk_path.write_text(text, encoding="utf-8")
+
+    if not found_main_mk:
+        fail(f"Makefile not found in {build_dir}")
+
+def ensure_module_decl_inc(build_dir):
+    """Ensure .csconfig/module_decl.inc exists for cache.h and ooo_cpu.h."""
+    target = build_dir / ".csconfig" / "module_decl.inc"
+    if target.is_file():
+        return
+    candidates = [
+        SOURCE_WINDOWS / ".csconfig" / "module_decl.inc",
+        CHAMPSIM / ".upstream-windows" / ".csconfig" / "module_decl.inc",
+        CHAMPSIM / "champsim-source" / ".csconfig" / "module_decl.inc",
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cand, target)
+            return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "#ifndef  CHAMPSIM_LEGACY_MODULE_DECL\n"
+        "#define  CHAMPSIM_LEGACY_MODULE_DECL\n"
+        "#endif\n",
+        encoding="utf-8",
+    )
+
+
+def find_built_binary(build_dir):
+    """Locate the compiled knobbed simulator binary (.exe or extensionless on Windows)."""
+    for name in ("champsim_knobbed.exe", "champsim_knobbed"):
+        cand = build_dir / "bin" / name
+        if cand.is_file():
+            return cand
+    return None
+
+
 # ---- 1. preflight ---------------------------------------------------------------------
 def preflight(traces):
-    if os.name != "nt":
-        fail("This script is for native Windows. On Linux use champsim/build_knobbed.sh and "
-             "champsim/knob_carbs.py (see KNOB_TUNING_README.md), or run it inside WSL2.")
     if not SOURCE_WINDOWS.is_dir():
         fail(f"ChampSim Windows source was not found: {SOURCE_WINDOWS}")
-    if (LLVM_BIN / "clang.exe").is_file():
-        os.environ["PATH"] = str(LLVM_BIN) + os.pathsep + os.environ.get("PATH", "")
     command_path("python", "Install Python 3.")
-    clang = command_path("clang", "Install LLVM (https://releases.llvm.org).")
-    command_path("make", "Install GNU Make (for example: winget install GnuWin32.Make).")
+    clang_path = command_path("clang", "Install LLVM/Clang and add it to PATH.")
+    clangpp_path = command_path("clang++", "Install LLVM/Clang++ and add it to PATH.")
+    make_path = command_path("make", "Install GNU Make for Windows and add it to PATH.")
     try:
         import numpy  # noqa: F401  (knob_carbs.py needs it)
     except ImportError:
@@ -100,41 +231,86 @@ def preflight(traces):
     # .xz traces need no external xz: ChampSim decompresses them with its built-in lzma support.
     runtime = SOURCE_WINDOWS / "vcpkg_installed" / "x64-windows" / "bin"
     if not runtime.is_dir():
-        fail(f"vcpkg runtime DLLs not found: {runtime}. Build ChampSim's vcpkg dependencies first "
-             "(see champsim/README.md, Windows prerequisites).")
-    # same PATH layout as run_windows.py: LLVM first, then the vcpkg DLLs
-    os.environ["PATH"] = os.pathsep.join([str(clang.parent), str(runtime), os.environ.get("PATH", "")])
+        fail(
+            f"vcpkg runtime DLLs not found: {runtime}. Build ChampSim's vcpkg dependencies first "
+            "(see champsim/README.md, Windows prerequisites)."
+        )
+    extra_dirs = [str(runtime)]
+    for tool_path in (clang_path, clangpp_path, make_path):
+        parent = str(tool_path.parent)
+        if parent not in extra_dirs:
+            extra_dirs.append(parent)
+    os.environ["PATH"] = os.pathsep.join([*extra_dirs, os.environ.get("PATH", "")])
 
 
-# ---- 2. build -------------------------------------------------------------------------
+# ---- 2. build (native Windows clang++ + GNU Make) -----------------------------------
 def build(build_dir, rebuild):
-    exe = build_dir / "bin" / "champsim_knobbed.exe"
-    if exe.is_file() and not rebuild:
+    exe = find_built_binary(build_dir)
+    if exe is not None and not rebuild:
         print(f"Reusing {exe} (pass --rebuild to rebuild)")
         return exe
-    print(f"Building knobbed ChampSim in {build_dir} (a few minutes)", flush=True)
+
+    print(f"Building knobbed ChampSim natively on Windows in {build_dir}", flush=True)
+    if rebuild and build_dir.exists():
+        rmtree_force(build_dir)
     build_dir.mkdir(parents=True, exist_ok=True)
-    skip = shutil.ignore_patterns(".csconfig", "bin", "tracer", "absolute.options")
-    shutil.copytree(SOURCE_WINDOWS, build_dir, ignore=skip, dirs_exist_ok=True)
-    modules = build_dir / "knobbed_modules"
-    shutil.rmtree(modules, ignore_errors=True)
-    shutil.copytree(MODULES, modules)
-    for stale in (".csconfig", "inc/cache_modules.h", "inc/ooo_cpu_modules.h"):
-        path = build_dir / stale
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink(missing_ok=True)
-    subprocess.run([sys.executable, str(build_dir / "config.sh"), "--module-dir", str(modules), str(CONFIG)],
-                   cwd=build_dir, check=True)
-    # config.sh can leave absolute paths here; run_windows.py deletes it before make too
-    (build_dir / "absolute.options").unlink(missing_ok=True)
-    subprocess.run(
-        [str(command_path("make", "GNU Make")), "CXX=clang++", "CC=clang",
-         "CXXFLAGS=-Wno-c++11-narrowing -fms-runtime-lib=dll", "LDLIBS=-lshell32"],
-        cwd=build_dir, check=True)
-    if not exe.is_file():
-        fail(f"Build finished but {exe} does not exist; the name comes from executable_name in {CONFIG}.")
+
+    # Copy source-windows tree into build_dir (skipping .csconfig and bin for a clean configure)
+    ignore_names = shutil.ignore_patterns(".csconfig", "bin", ".git", "__pycache__")
+    shutil.copytree(SOURCE_WINDOWS, build_dir, dirs_exist_ok=True, copy_function=copy_overwrite_readonly, ignore=ignore_names)
+
+    # Copy knobbed config and custom modules into build_dir
+    if CONFIG.is_file():
+        copy_overwrite_readonly(CONFIG, build_dir / "champsim_config_knobbed.json")
+    knobbed_modules_dst = build_dir / "knobbed_modules"
+    if MODULES.is_dir():
+        if knobbed_modules_dst.exists():
+            rmtree_force(knobbed_modules_dst)
+        shutil.copytree(MODULES, knobbed_modules_dst, dirs_exist_ok=True, copy_function=copy_overwrite_readonly)
+
+    shim_dir = install_win_shims(build_dir)
+    build_env = dict(os.environ)
+    build_env["PATH"] = os.pathsep.join([str(shim_dir), build_env.get("PATH", "")])
+
+    # Run config.sh if present
+    config_script = build_dir / "config.sh"
+    if config_script.is_file():
+        config_args = [sys.executable, str(config_script)]
+        if knobbed_modules_dst.is_dir():
+            config_args.extend(["--module-dir", str(knobbed_modules_dst)])
+        if (build_dir / "champsim_config_knobbed.json").is_file():
+            config_args.append(str(build_dir / "champsim_config_knobbed.json"))
+        run_stage("configure knobbed ChampSim", config_args, cwd=build_dir, env=build_env)
+
+    abs_opts = build_dir / "absolute.options"
+    if abs_opts.is_file():
+        abs_opts.unlink()
+
+    ensure_module_decl_inc(build_dir)
+    patch_native_windows_makefile(build_dir)
+
+    jobs = os.environ.get("NUMBER_OF_PROCESSORS") or str(os.cpu_count() or 4)
+    run_stage(
+        f"compile knobbed ChampSim (clang++, -j{jobs})",
+        [
+            "make",
+            "-j",
+            jobs,
+            "CXX=clang++",
+            "CC=clang",
+            "CXXFLAGS=-w -Wno-c++11-narrowing -fms-runtime-lib=dll",
+            "LDLIBS=-lshell32",
+        ],
+        cwd=build_dir,
+        env=build_env,
+    )
+
+    exe = find_built_binary(build_dir)
+    if exe is None or not exe.is_file():
+        fail(
+            f"Build finished but no knobbed binary was found in {build_dir / 'bin'}; "
+            f"check executable_name in {CONFIG}."
+        )
     return exe
 
 
@@ -142,7 +318,7 @@ def build(build_dir, rebuild):
 def load_results(directory):
     rows = []
     for path in sorted(Path(directory).glob("*.json")):
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         ref = data.get("reference", {})
         off, default = ref.get("prefetch_off"), ref.get("default_hint")
         best = data.get("best", {}).get("cycles")
@@ -150,10 +326,14 @@ def load_results(directory):
             continue
         speed = {}
         for name, runs in data["traces"].items():
-            finals = [t[-1] for t in runs if t and math.isfinite(t[-1])]
+            finals = [t[-1] for t in runs if t and math.isfinite(t[-1]) and t[-1] > 0]
             speed[name] = off / statistics.median(finals) if finals else float("nan")
-        rows.append({"kernel": data["kernel"], "default": off / default if default else float("nan"),
-                     "best": off / best, **speed})
+        rows.append({
+            "kernel": data["kernel"],
+            "default": off / default if default else float("nan"),
+            "best": off / best,
+            **speed,
+        })
     return rows
 
 
@@ -165,12 +345,17 @@ def plot(rows, out_png):
     except ImportError:
         print("matplotlib not installed; skipping the plot (python -m pip install matplotlib)")
         return
-    series = [("default", "default hint"), ("carbs", "CARBS"), ("random", "random"),
-              ("hillclimb", "hill-climb"), ("best", "best found")]
+    series = [
+        ("default", "default hint"),
+        ("carbs", "CARBS"),
+        ("random", "random"),
+        ("hillclimb", "hill-climb"),
+        ("best", "best found"),
+    ]
     width = 0.16
     fig, ax = plt.subplots(figsize=(max(6, 1.3 * len(rows)), 4.5))
     for i, (key, label) in enumerate(series):
-        ax.bar([x + (i - 2) * width for x in range(len(rows))], [r[key] for r in rows], width, label=label)
+        ax.bar([x + (i - 2) * width for x in range(len(rows))], [r.get(key, float("nan")) for r in rows], width, label=label)
     ax.axhline(1.0, color="gray", linewidth=0.8)
     ax.set_xticks(range(len(rows)))
     ax.set_xticklabels([r["kernel"] for r in rows], rotation=35, ha="right", fontsize=8)
@@ -182,8 +367,11 @@ def plot(rows, out_png):
 
 
 def report(directory, no_plots):
-    subprocess.run([sys.executable, str(TUNER), "--summarize", str(directory)], check=True,
-                   env=dict(os.environ, PYTHONPATH=str(ROOT)))
+    subprocess.run(
+        [sys.executable, str(TUNER), "--summarize", str(directory)],
+        check=True,
+        env=dict(os.environ, PYTHONPATH=str(ROOT)),
+    )
     rows = load_results(directory)
     if rows and not no_plots:
         plot(rows, Path(directory) / "speedup.png")
@@ -195,7 +383,7 @@ def main():
                         help="ChampSim traces: paths, or bare names like 605.mcf_s-1554B looked up in --trace-dir")
     parser.add_argument("--trace-dir", default=str(Path.home() / "spec-traces"),
                         help="where download_spec_traces.ps1 puts traces (default ~/spec-traces)")
-    parser.add_argument("--all", action="store_true", help="tune on every *.champsimtrace.xz in --trace-dir")
+    parser.add_argument("--all", action="store_true", help="tune on every trace in --trace-dir")
     parser.add_argument("--out", help="results directory (default champsim/results/knob-carbs-windows)")
     parser.add_argument("--budget", type=int, default=20, help="evaluations per tuner run")
     parser.add_argument("--seeds", type=int, default=2)
@@ -206,7 +394,7 @@ def main():
                         help="simulate every distinct config first (2,305 per trace; ground truth)")
     parser.add_argument("--jobs", type=int, default=4, help="parallel simulations for --exhaustive")
     parser.add_argument("--build-dir", default=r"C:\champsim-knobbed-win", help="must not contain spaces")
-    parser.add_argument("--rebuild", action="store_true", help="rebuild even if the .exe exists")
+    parser.add_argument("--rebuild", action="store_true", help="rebuild even if the binary exists")
     parser.add_argument("--skip-tests", action="store_true", help="skip flagbench/test_tuners.py")
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument("--report-only", metavar="DIR",
@@ -218,9 +406,12 @@ def main():
         return
     trace_dir = Path(args.trace_dir).expanduser()
     if args.all:
-        traces = sorted(trace_dir.glob("*.champsimtrace.xz"))
+        traces = sorted(
+            p for p in trace_dir.iterdir()
+            if p.is_file() and any(p.name.endswith(s) for s in TRACE_SUFFIXES)
+        )
         if not traces:
-            fail(f"No *.champsimtrace.xz files in {trace_dir}")
+            fail(f"No trace files ({', '.join(TRACE_SUFFIXES)}) found in {trace_dir}")
     elif args.trace:
         traces = [find_trace(t, trace_dir) for t in args.trace]
     else:
