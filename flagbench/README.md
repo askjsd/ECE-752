@@ -31,6 +31,15 @@ Fixed-seed in-program inputs, no I/O, only the kernel is inside the ROI, checksu
 1.4–3.1 M instructions (`k_ptrchase`: 1.5 M instructions but ~46 M cycles).
 Correctness = simulated checksum equals the checksum of a native `-O0` reference build (`-DNO_M5OPS`).
 
+Additional compiler-sensitivity kernels are available in `kernels/`:
+`k_hoist_iv` targets loop-invariant motion, GCSE, IVOPTS, and predictive
+commoning; `k_slp_unroll` combines tuple arithmetic with an 8-tap FIR to
+exercise SLP vectorization and unrolling; `k_epistasis_pipe` stresses
+inlining, IPA-CP, loop splitting, unswitching, and vectorization; and
+`k_multistage_gemm` combines tiled GEMM with a histogram update to expose
+interactions among loop distribution, unrolling, and vectorization. Each uses
+fixed-seed inputs and prints a checksum after its region of interest.
+
 ## Commands
 ```bash
 # one-time: m5ops library for X86 (needed to link m5_work_begin/end)

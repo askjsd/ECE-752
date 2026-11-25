@@ -21,7 +21,7 @@ from portable_flags import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CHAMPSIM = Path(__file__).resolve().parent
-UPSTREAM = CHAMPSIM / "champsim-source"
+UPSTREAM = CHAMPSIM / "source-windows"
 TRACER = UPSTREAM / "tracer" / "pin" / "obj-intel64" / "champsim_tracer.dll"
 SIMULATOR = UPSTREAM / "bin" / "champsim.exe"
 DEFAULT_BUDGETS = (10, 20, 50, 100, 200)
@@ -73,6 +73,8 @@ def build(pin, make):
         cwd=UPSTREAM,
         check=True,
     )
+    # This generated file can retain absolute paths from a copied build tree.
+    (UPSTREAM / "absolute.options").unlink(missing_ok=True)
     make_path = command_path("make", "GNU Make")
     subprocess.run(
         [

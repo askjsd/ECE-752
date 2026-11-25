@@ -22,7 +22,7 @@ $evaluationBudgetValues = @($EvaluationBudgets -split "," | ForEach-Object {
     })
 $champsimDir = (Get-Item $PSScriptRoot).FullName
 $repo = (Get-Item (Join-Path $champsimDir "..")).FullName
-$upstream = Join-Path $champsimDir "champsim-source"
+$upstream = Join-Path $champsimDir "source-windows"
 $tracerDir = Join-Path $upstream "tracer\pin"
 $tracer = Join-Path $tracerDir "obj-intel64\champsim_tracer.dll"
 $simulator = Join-Path $upstream "bin\champsim.exe"
@@ -74,6 +74,9 @@ if ($Build) {
     }
     Push-Location $upstream
     try {
+        & python (Join-Path $upstream "config.sh") (Join-Path $champsimDir "champsim_config.json")
+        if ($LASTEXITCODE -ne 0) { throw "ChampSim configuration failed." }
+        Remove-Item -LiteralPath (Join-Path $upstream "absolute.options") -Force -ErrorAction SilentlyContinue
         & $make.Source "CXX=clang++" "CC=clang" "CXXFLAGS=-Wno-c++11-narrowing -fms-runtime-lib=dll" "LDLIBS=-lshell32"
         if ($LASTEXITCODE -ne 0) { throw "ChampSim build failed." }
     } finally {

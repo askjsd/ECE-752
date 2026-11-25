@@ -28,21 +28,23 @@ internally. Don't use `run_windows.py` on Linux.
 ## One-time setup
 
 Tested on Ubuntu 24.04 (GCC 13) with no root and `ptrace_scope=3`. Run these from
-the repo root. **Use a repo path without spaces** (see the note in step 1).
+the repo root.
 
 ### 1. Build ChampSim
 
 ```bash
-./champsim/setup.sh                 # clones upstream; the first build fails on missing dependencies
-cd champsim/.upstream
-./vcpkg/bootstrap-vcpkg.sh -disableMetrics && ./vcpkg/vcpkg install
-cd ../.. && ./champsim/setup.sh     # builds champsim/.upstream/bin/champsim
+./champsim/setup_linux.sh           # -> ~/champsim-linux/bin/champsim (about a minute, no root)
 ```
 
-ChampSim's Makefile cannot find its vcpkg libraries if the repo path contains a
-space (for example `ece 752`). Clone or symlink to a path without one. If you
-can't, hand-quote `champsim/.upstream/absolute.options` and pass
-`LDFLAGS='-L"<path>/vcpkg_installed/x64-linux/lib"'` to `make`.
+This builds the repo's `champsim/source-linux` in a copy at `~/champsim-linux`
+(override with `CHAMPSIM_BUILD=/some/path`) and installs its dependencies there.
+The build can't happen inside the repo because ChampSim's Makefile breaks on
+paths containing spaces, such as `ece 752`. The source tree isn't modified.
+Rerun the script after editing `champsim/champsim_config.json`.
+
+`champsim/source-windows` is the tree the Windows runs use. Don't use it on
+Linux. `champsim/setup.sh` and `champsim/.upstream` (a fresh clone of upstream
+ChampSim) are kept as a fallback, but this guide doesn't use them.
 
 ### 2. Get DynamoRIO (the tracer)
 
@@ -101,7 +103,7 @@ A small run on a kernel that responds strongly to flags:
 ```bash
 venv/bin/python champsim/dynamorio/run_carbs_adaptive.py \
   --repo "$PWD" \
-  --champsim-root "$PWD/champsim/.upstream" \
+  --champsim-root "$HOME/champsim-linux" \
   --trace-backend dynamorio \
   --dynamorio /path/to/DynamoRIO-Linux-11.3.0-1 \
   --compiler clang \
@@ -122,7 +124,7 @@ is simulated twice.
 ```bash
 venv/bin/python champsim/dynamorio/run_carbs_adaptive.py \
   --repo "$PWD" \
-  --champsim-root "$PWD/champsim/.upstream" \
+  --champsim-root "$HOME/champsim-linux" \
   --trace-backend dynamorio \
   --dynamorio /path/to/DynamoRIO-Linux-11.3.0-1 \
   --compiler clang \
@@ -167,6 +169,10 @@ Drop `--compare` and pick one algorithm:
 | `k_stencil`, `k_reduce`, `k_helper` | Moderate flag sensitivity. |
 | `k_crc32`, `k_branchy` | Low sensitivity. |
 | `k_ptrchase` | Control case. It is memory-bound, so flags barely matter. |
+| `k_hoist_iv` | Fixed-point grid filter; loop-invariant motion, GCSE, IVOPTS, and predictive commoning. |
+| `k_slp_unroll` | Tuple math and an 8-tap FIR; SLP vectorization and unrolling. |
+| `k_epistasis_pipe` | Helper-heavy pipeline; inlining, IPA-CP, loop splitting, unswitching, and vectorization. |
+| `k_multistage_gemm` | Tiled GEMM, histogram, and transpose; loop distribution, unrolling, and vectorization. |
 
 ## What you get
 
@@ -195,6 +201,10 @@ your budget. A finished example is in
 | `k_stencil`, `k_reduce`, `k_helper` | Moderate flag sensitivity. |
 | `k_crc32`, `k_branchy` | Low sensitivity. |
 | `k_ptrchase` | Control case. It is memory-bound, so flags barely matter. |
+| `k_hoist_iv` | Fixed-point grid filter; loop-invariant motion, GCSE, IVOPTS, and predictive commoning. |
+| `k_slp_unroll` | Tuple math and an 8-tap FIR; SLP vectorization and unrolling. |
+| `k_epistasis_pipe` | Helper-heavy pipeline; inlining, IPA-CP, loop splitting, unswitching, and vectorization. |
+| `k_multistage_gemm` | Tiled GEMM, histogram, and transpose; loop distribution, unrolling, and vectorization. |
 
 ## What you get
 
@@ -233,10 +243,10 @@ fails to build the tracer with GCC 13.
 
 ```bash
 export PIN_ROOT=/path/to/pin-external-3.31-...-gcc-linux
-make -C champsim/.upstream/tracer/pin     # builds champsim_tracer.so
+make -C ~/champsim-linux/tracer/pin       # builds champsim_tracer.so (untested on source-linux)
 # then replace the --trace-backend/--dynamorio lines above with:
 #   --pin "$PIN_ROOT" \
-#   --tracer "$PWD/champsim/.upstream/tracer/pin/obj-intel64/champsim_tracer.so" \
+#   --tracer "$HOME/champsim-linux/tracer/pin/obj-intel64/champsim_tracer.so" \
 ```
 
 Don't compare cycle counts between PIN and DynamoRIO runs. The two backends
@@ -256,3 +266,15 @@ DR=/path/to/DynamoRIO-Linux-11.3.0-1 PY=venv/bin/python \
 ```
 
 Binaries must be static non-PIE, which the runner's `gcc -static` build gives.
+
+## Trying the knobbed prefetcher
+
+[modules/prefetcher/knobbed/](modules/prefetcher/knobbed/README.md) is a tunable
+prefetcher built as an external ChampSim module. Build it after step 1:
+
+```bash
+champsim/build_knobbed.sh           # -> ~/champsim-knobbed-linux/bin/champsim_knobbed
+```
+
+It is a separate simulator binary, so the commands above are unaffected. See its
+README for the knobs.

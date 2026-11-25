@@ -56,9 +56,9 @@ For example, use 20 flags and let CARBS request up to 100 evaluations:
 ```powershell
 python .\champsim\run_carbs_adaptive.py `
   --repo . `
-  --champsim-root .\champsim\champsim-source `
+  --champsim-root .\champsim\source-windows `
   --pin C:\path\to\pin `
-  --tracer .\champsim\champsim-source\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --tracer .\champsim\source-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
   --out .\champsim\results\adaptive-k-mix2 `
   --kernel k_mix2 `
   --nflags 20 `
@@ -123,9 +123,9 @@ are reused:
 ```powershell
 python .\champsim\run_carbs_adaptive.py `
   --repo . `
-  --champsim-root .\champsim\champsim-source `
+  --champsim-root .\champsim\source-windows `
   --pin C:\path\to\pin `
-  --tracer .\champsim\champsim-source\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --tracer .\champsim\source-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
   --out .\champsim\results\compare-k-mix2-24flag `
   --kernel k_mix2 `
   --nflags 24 `
@@ -155,6 +155,10 @@ sampling noise; 10k was too short to complete reliably in an earlier run.
 | `k_helper` | Hot helper calls | Moderate: inline + IPA |
 | `k_mix2` | 10-phase flag-stress kernel | **High**: stencil, reduce, CRC, helper, interchange, stride, FP matmul, IPA stress — opposing flag preferences produce the widest cycle range |
 | `k_optstress` | Repeated independent floating-point array updates | **High for vectorization flags**: designed to expose loop and SLP vectorization differences |
+| `k_hoist_iv` | Fixed-point 2D grid filter | Smooth sensitivity to loop-invariant motion, GCSE, IVOPTS, and predictive commoning |
+| `k_slp_unroll` | Four-channel tuple updates plus an 8-tap FIR | Smooth sensitivity to SLP vectorization and loop unrolling |
+| `k_epistasis_pipe` | Helper-heavy, multi-pass floating-point pipeline | High-order interactions among inlining, IPA-CP, loop splitting, unswitching, and vectorization |
+| `k_multistage_gemm` | Tiled GEMM with an indirect histogram and transpose mix | High-order interactions among loop distribution, unrolling, and vectorization |
 
 `k_optstress` isolates compiler-flag sensitivity in one hot loop and is the
 recommended first check when validating whether vectorization settings change
@@ -167,9 +171,9 @@ cross-machine performance claim:
 ```powershell
 python .\champsim\run_carbs_adaptive.py `
   --repo . `
-  --champsim-root .\champsim\champsim-source `
+  --champsim-root .\champsim\source-windows `
   --pin C:\path\to\pin `
-  --tracer .\champsim\champsim-source\tracer\pin\obj-intel64\champsim_tracer.dll `
+  --tracer .\champsim\source-windows\tracer\pin\obj-intel64\champsim_tracer.dll `
   --out .\champsim\results\compare-k-optstress `
   --kernel k_optstress `
   --nflags 4 `
@@ -252,7 +256,7 @@ directory if you want to resume or inspect per-configuration results.
 - GNU Make, only when using `--build`
 - Intel PIN for Windows, with `pin.exe`
 - ChampSim's vcpkg runtime DLLs under
-  `champsim\champsim-source\vcpkg_installed\x64-windows\bin`
+  `champsim\source-windows\vcpkg_installed\x64-windows\bin`
 
 The script automatically adds the standard LLVM installation directory and
 finds the newest `pin-external-*-windows` directory under `Downloads`.
