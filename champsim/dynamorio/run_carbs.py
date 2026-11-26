@@ -169,14 +169,16 @@ def checksum(binary):
     return match.group(1)
 
 
-def text_hash(binary, objcopy, temp_dir):
+def text_hash(binary, objcopy, temp_dir, objcopy_run=command):
     text = os.path.join(temp_dir, f"text_{threading.get_ident()}.bin")
     try:
-        command(
+        result = objcopy_run(
             [objcopy, "-O", "binary", "-j", ".text", binary, text],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        if result.returncode:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
         with open(text, "rb") as stream:
             return hashlib.sha256(stream.read()).hexdigest()
     except Exception:
@@ -355,9 +357,12 @@ def main():
                 "Install it with: wsl.exe sudo apt-get install mingw-w64"
             )
         compiler = "x86_64-w64-mingw32-gcc"
+        objcopy = "x86_64-w64-mingw32-objcopy"
+        objcopy_run = compiler_run
     else:
         compiler_run = subprocess.run
-    objcopy = shutil.which("objcopy") or shutil.which("llvm-objcopy")
+        objcopy = shutil.which("objcopy") or shutil.which("llvm-objcopy")
+        objcopy_run = command
     simulator = executable(os.path.join(champsim, "bin"), "champsim")
     if args.trace_backend == "pin":
         pin_bin = executable(pin, "pin")
@@ -456,7 +461,7 @@ def main():
         and os.path.getsize(o3_binary) > 0
     )
     if reuse_o3:
-        o3_hash = text_hash(o3_binary, objcopy, hash_dir)
+        o3_hash = text_hash(o3_binary, objcopy, hash_dir, objcopy_run)
     else:
         result = compile_binary(o3_binary, "-O3", [], o3_log)
         if result.returncode:
@@ -466,7 +471,7 @@ def main():
                 flush=True,
             )
         else:
-            o3_hash = text_hash(o3_binary, objcopy, hash_dir)
+            o3_hash = text_hash(o3_binary, objcopy, hash_dir, objcopy_run)
 
     total_configs = 1 << len(flags)
     config_ids = (
@@ -535,7 +540,7 @@ def main():
                 flush=True,
             )
             continue
-        binary_hash = text_hash(binary, objcopy, hash_dir)
+        binary_hash = text_hash(binary, objcopy, hash_dir, objcopy_run)
         config_info.append((config_id, binary, binary_hash))
         if binary_hash not in unique_binaries:
             unique_binaries[binary_hash] = (config_id, binary)
