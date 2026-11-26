@@ -19,7 +19,9 @@
 #   env:   CHAMPSIM_DEPS  tree with vcpkg_installed  (default: ~/champsim-linux)
 #          KNOBBED_BUILD  build directory            (default: ~/champsim-knobbed-<which>)
 #          JOBS           parallel make jobs
-# Output: $KNOBBED_BUILD/bin/champsim_knobbed
+#          KNOBBED_CONFIG  ChampSim config json     (default: champsim_config_knobbed.json;
+#                          use champsim_config_knobbed_bp.json for the branch predictor)
+# Output: $KNOBBED_BUILD/bin/<executable_name from the config>
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 which="${1:-linux}"
@@ -52,6 +54,7 @@ for m in "$build"/knobbed_modules/*/*/; do
 done
 
 cd "$build"
-python3 ./config.sh --module-dir "$build/knobbed_modules" "$here/champsim_config_knobbed.json"
+cfg="${KNOBBED_CONFIG:-$here/champsim_config_knobbed.json}"
+python3 ./config.sh --module-dir "$build/knobbed_modules" "$cfg"
 make -j"${JOBS:-$(nproc)}"
-echo "Built $build/bin/champsim_knobbed (source-$which)"
+echo "Built $build/bin/ (executable_name from $cfg) (source-$which)"
