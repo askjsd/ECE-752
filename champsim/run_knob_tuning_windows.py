@@ -538,7 +538,7 @@ def main():
     parser.add_argument(
         "--auto-hierarchy",
         action="store_true",
-        help="use full hierarchy for fill_* traces and L1-only for all other pfbench traces",
+        help="use full hierarchy for fill_* and *_l2gap* traces and L1-only for all other pfbench traces",
     )
     parser.add_argument(
         "--config", default=str(CONFIG), help="ChampSim config JSON"
@@ -641,6 +641,7 @@ def main():
                 not args.auto_hierarchy
                 or kernel.startswith("fill_")
                 or kernel == "filllevel"
+                or "_l2gap" in kernel  # stream_holes --gap-level=l2
             )
             else exe_l1only
         )
