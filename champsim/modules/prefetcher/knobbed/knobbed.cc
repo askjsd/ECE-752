@@ -430,8 +430,8 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
         pending_blocks.insert(pblk);
         return true;
       };
-      // Prefetching physical addresses: never cross the page (the next page is unrelated).
-      auto same_page = [&](champsim::address pf) { return intern_->virtual_prefetch || champsim::page_number{pf} == champsim::page_number{addr}; };
+      // Virtual-only mode is hard-wired (ooo_cpu.cc): every address is virtual, so
+      // prefetches cross pages freely. Keep it that way: do not add translation back.
 
       // Fill policy: confidence C decides whether the block fills this level.
       const double conf_c = confidence(reg, conf);
@@ -466,8 +466,6 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
           // Candidate i is (distance + i) strides ahead of this access.
           const auto steps = static_cast<champsim::block_number::difference_type>(rg.distance + i);
           champsim::address pf{champsim::block_number{cl_addr} + use_stride * steps};
-          if (!same_page(pf))
-            break;
           enqueue(pf, fill_here);
         }
       }
@@ -477,8 +475,6 @@ uint32_t knobbed::prefetcher_cache_operate(champsim::address addr, champsim::add
       if (h.fallback && !engine_had_something && h.source != stride_source::NEXT_LINE) {
         for (int i = 1; i <= FALLBACK_DEGREE; ++i) {
           champsim::address pf{champsim::block_number{cl_addr} + i};
-          if (!same_page(pf))
-            break;
           enqueue(pf, false);
         }
       }

@@ -60,9 +60,12 @@ Ladder (distance, degree):
 | nextline / stride | 1,1 | 1,2 | 1,4 | 1,8 | 2,4 | 4,4 | 4,8 | 8,8 |
 | markov | 1,1 | 1,2 | 1,4 | 1,8 | 2,2 | 2,4 | 2,8 | 4,4 |
 
-Distances stop at 8 for stride and next-line because they cannot cross a 4 KB page
-(a larger distance would only mean "prefetch less often"). For Markov, distance is
-how many chain links are skipped, and long chains are rare.
+Distances stop at 8 for stride and next-line. This cap dates from when prefetches
+could not cross a 4 KB page (a larger distance would only have meant "prefetch less
+often"). This project runs ChampSim in virtual-only mode, hard-wired in `ooo_cpu.cc`
+(identity mapping, no TLBs or page walks), so prefetches cross pages freely. Keep it
+that way: do not re-enable translation. For Markov, distance is how many chain
+links are skipped, and long chains are rare.
 
 **Insertion position** is a separate module, `modules/replacement/lru_pf`, used by
 the L1D in `champsim_config_knobbed.json`. `KNOBBED_INSERT=mru` (default, identical to
@@ -72,8 +75,8 @@ useless prefetch is evicted first. It applies to the whole cache, not per region
 Removed in this version: `enable` (now `source=off`), `drop` and the two fill
 thresholds (now the four-value `fill` policy), `distance`/`degree` (now `level`),
 `maxinflight` (it only capped prefetches that fill this level and overlaps with
-degree and the prefetch queue), `pagecross` (the page limit always applies with
-physical addresses), the `DEAD_BLOCK` trigger (it behaved like `miss`) and `insert` in
+degree and the prefetch queue), `pagecross` (prefetches always cross pages: this project
+runs with translation off), the `DEAD_BLOCK` trigger (it behaved like `miss`) and `insert` in
 the hint (now `KNOBBED_INSERT`).
 
 Region hints: set `KNOBBED_REGIONS` to a file with one region per line,

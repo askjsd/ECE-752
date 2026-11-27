@@ -811,18 +811,11 @@ void LSQ_ENTRY::finish(ooo_model_instr& rob_entry) const
   }
 }
 
-// Virtual-only mode (default): requests leave the core already "translated" with
-// physical address == virtual address, so the TLBs, the page-table walker and
-// the page allocator are never used. Set CHAMPSIM_TRANSLATION=1 to restore the
-// normal translated memory system.
-static bool identity_mapped()
-{
-  static const bool on = [] {
-    const char* v = std::getenv("CHAMPSIM_TRANSLATION");
-    return !(v && v[0] != '\0' && v[0] != '0');
-  }();
-  return on;
-}
+// Virtual-only mode, hard-wired: requests leave the core already "translated" with
+// physical address == virtual address, so the TLBs, the page-table walker and the
+// page allocator are never used. Keep it this way: this project does not model
+// address translation, and the knobbed prefetcher assumes prefetches may cross pages.
+static constexpr bool identity_mapped() { return true; }
 
 bool CacheBus::issue_read(request_type data_packet)
 {

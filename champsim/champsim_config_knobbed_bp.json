@@ -1,4 +1,5 @@
 {
+  "_note": "Virtual-only mode: address translation is hard-wired OFF (identity_mapped() in src/ooo_cpu.cc). Keep it that way; do not re-enable TLBs/page walks. All addresses are virtual and prefetches may cross pages.",
   "executable_name": "champsim_knobbed_bp",
   "block_size": 64,
   "page_size": 4096,
