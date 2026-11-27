@@ -42,7 +42,13 @@ MODULES = CHAMPSIM / "modules"
 CONFIG = CHAMPSIM / "champsim_config_knobbed.json"
 TUNER = CHAMPSIM / "knob_carbs.py"
 LLVM_BIN = Path(r"C:\Program Files\LLVM\bin")
-TRACE_SUFFIXES = (".champsimtrace.xz", ".champsimtrace", ".trace.xz", ".trace", ".xz")
+TRACE_SUFFIXES = (
+    ".champsimtrace.xz",
+    ".champsimtrace",
+    ".trace.xz",
+    ".trace",
+    ".xz",
+)
 
 
 def fail(message):
@@ -57,6 +63,18 @@ def command_path(name, hint):
         candidate = LLVM_BIN / f"{name}.exe"
         if candidate.is_file():
             return candidate
+    if name == "make":
+        winget_pkgs = (
+            Path.home()
+            / "AppData"
+            / "Local"
+            / "Microsoft"
+            / "WinGet"
+            / "Packages"
+        )
+        for candidate in winget_pkgs.glob("ezwinports.make_*/bin/make.exe"):
+            if candidate.is_file():
+                return candidate
     fail(f"{name} was not found on PATH. {hint}")
 
 
@@ -95,7 +113,9 @@ def rmtree_force(path):
 
 def kernel_name(trace):
     """File name without the trace suffixes: 605.mcf_s-1554B.champsimtrace.xz -> 605.mcf_s-1554B."""
-    return re.sub(r"\.(champsimtrace|trace|champsim)?(\.xz)?$", "", Path(trace).name)
+    return re.sub(
+        r"\.(champsimtrace|trace|champsim)?(\.xz)?$", "", Path(trace).name
+    )
 
 
 def find_trace(name, trace_dir):
@@ -107,7 +127,9 @@ def find_trace(name, trace_dir):
         cand = trace_dir / (name + suffix)
         if cand.is_file():
             return cand
-    fail(f"Trace not found: {name} (also looked in {trace_dir}). Download with champsim\\download_spec_traces.ps1.")
+    fail(
+        f"Trace not found: {name} (also looked in {trace_dir}). Download with champsim\\download_spec_traces.ps1."
+    )
 
 
 def install_win_shims(build_dir):
@@ -117,7 +139,7 @@ def install_win_shims(build_dir):
     py_win = str(Path(sys.executable).resolve())
 
     cmd_shim = shim_dir / "python3.cmd"
-    cmd_shim.write_bytes(f'@echo off\r\n"{py_win}" %*\r\n'.encode("utf-8"))
+    cmd_shim.write_bytes(f'@echo off\r\n"{py_win}" %*\r\n'.encode())
 
     # Handle Unix-style `mkdir -p dir1 dir2` inside cmd.exe Makefile recipes
     mkdir_shim = shim_dir / "mkdir.cmd"
@@ -135,7 +157,7 @@ def install_win_shims(build_dir):
     return shim_dir
 
 
-def patch_native_windows_makefile(build_dir):
+def patch_native_windows_makefile(build_dir, exe_name="champsim_knobbed"):
     """Ensure native Windows clang++/lld-link compatibility in the copied Makefile."""
     (build_dir / "bin").mkdir(parents=True, exist_ok=True)
     (build_dir / "test" / "bin").mkdir(parents=True, exist_ok=True)
@@ -156,8 +178,10 @@ def patch_native_windows_makefile(build_dir):
         # 0. Avoid trailing-slash directory target/prerequisite `bin\` in GNU Make on Windows
         text = text.replace("$(BIN_ROOT)/", "$(BIN_ROOT)")
         text = re.sub(r"(?<=\s)bin\\(?=\s|$)", " ", text)
-        text = text.replace("$(BIN_ROOT)\\champsim_knobbed", "$(BIN_ROOT)/champsim_knobbed")
-        text = text.replace("bin\\champsim_knobbed", "bin/champsim_knobbed")
+        text = text.replace(
+            f"$(BIN_ROOT)\\{exe_name}", f"$(BIN_ROOT)/{exe_name}"
+        )
+        text = text.replace(f"bin\\{exe_name}", f"bin/{exe_name}")
 
         # 1. Disable broken .d dependency generation (-MM) with @touch $@
         text = re.sub(
@@ -176,12 +200,15 @@ def patch_native_windows_makefile(build_dir):
                 text = text.replace(f"$({var})", filtered)
 
         # 3. Remove bare -l flags that clash with explicit vcpkg .lib paths on lld-link
-        text = re.sub(r"\s*-lCLI11\s+-llzma\s+-llibz\s+-lbz2\s+-lfmt", "", text)
+        text = re.sub(
+            r"\s*-lCLI11\s+-llzma\s+-llibz\s+-lbz2\s+-lfmt", "", text
+        )
 
         mk_path.write_text(text, encoding="utf-8")
 
     if not found_main_mk:
         fail(f"Makefile not found in {build_dir}")
+
 
 def ensure_module_decl_inc(build_dir):
     """Ensure .csconfig/module_decl.inc exists for cache.h and ooo_cpu.h."""
@@ -207,9 +234,19 @@ def ensure_module_decl_inc(build_dir):
     )
 
 
-def find_built_binary(build_dir):
+def config_exe_name(config_path):
+    """Read executable_name from a ChampSim config JSON, defaulting to champsim_knobbed."""
+    if config_path.is_file():
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        name = data.get("executable_name")
+        if name:
+            return name
+    return "champsim_knobbed"
+
+
+def find_built_binary(build_dir, exe_name="champsim_knobbed"):
     """Locate the compiled knobbed simulator binary (.exe or extensionless on Windows)."""
-    for name in ("champsim_knobbed.exe", "champsim_knobbed"):
+    for name in (f"{exe_name}.exe", exe_name):
         cand = build_dir / "bin" / name
         if cand.is_file():
             return cand
@@ -217,13 +254,19 @@ def find_built_binary(build_dir):
 
 
 # ---- 1. preflight ---------------------------------------------------------------------
-def preflight(traces):
+def preflight(traces=None):
     if not SOURCE_WINDOWS.is_dir():
         fail(f"ChampSim Windows source was not found: {SOURCE_WINDOWS}")
     command_path("python", "Install Python 3.")
-    clang_path = command_path("clang", "Install LLVM/Clang and add it to PATH.")
-    clangpp_path = command_path("clang++", "Install LLVM/Clang++ and add it to PATH.")
-    make_path = command_path("make", "Install GNU Make for Windows and add it to PATH.")
+    clang_path = command_path(
+        "clang", "Install LLVM/Clang and add it to PATH."
+    )
+    clangpp_path = command_path(
+        "clang++", "Install LLVM/Clang++ and add it to PATH."
+    )
+    make_path = command_path(
+        "make", "Install GNU Make for Windows and add it to PATH."
+    )
     try:
         import numpy  # noqa: F401  (knob_carbs.py needs it)
     except ImportError:
@@ -240,37 +283,59 @@ def preflight(traces):
         parent = str(tool_path.parent)
         if parent not in extra_dirs:
             extra_dirs.append(parent)
-    os.environ["PATH"] = os.pathsep.join([*extra_dirs, os.environ.get("PATH", "")])
+    os.environ["PATH"] = os.pathsep.join(
+        [*extra_dirs, os.environ.get("PATH", "")]
+    )
 
 
 # ---- 2. build (native Windows clang++ + GNU Make) -----------------------------------
-def build(build_dir, rebuild):
-    exe = find_built_binary(build_dir)
+def build(build_dir, rebuild, config_path=CONFIG):
+    config_path = Path(config_path)
+    exe_name = config_exe_name(config_path)
+    exe = find_built_binary(build_dir, exe_name)
     if exe is not None and not rebuild:
         print(f"Reusing {exe} (pass --rebuild to rebuild)")
         return exe
 
-    print(f"Building knobbed ChampSim natively on Windows in {build_dir}", flush=True)
+    print(
+        f"Building {exe_name} natively on Windows in {build_dir}", flush=True
+    )
     if rebuild and build_dir.exists():
         rmtree_force(build_dir)
     build_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy source-windows tree into build_dir (skipping .csconfig and bin for a clean configure)
-    ignore_names = shutil.ignore_patterns(".csconfig", "bin", ".git", "__pycache__")
-    shutil.copytree(SOURCE_WINDOWS, build_dir, dirs_exist_ok=True, copy_function=copy_overwrite_readonly, ignore=ignore_names)
+    ignore_names = shutil.ignore_patterns(
+        ".csconfig", "bin", ".git", "__pycache__"
+    )
+    shutil.copytree(
+        SOURCE_WINDOWS,
+        build_dir,
+        dirs_exist_ok=True,
+        copy_function=copy_overwrite_readonly,
+        ignore=ignore_names,
+    )
 
     # Copy knobbed config and custom modules into build_dir
-    if CONFIG.is_file():
-        copy_overwrite_readonly(CONFIG, build_dir / "champsim_config_knobbed.json")
+    cfg_dst = build_dir / config_path.name
+    if config_path.is_file():
+        copy_overwrite_readonly(config_path, cfg_dst)
     knobbed_modules_dst = build_dir / "knobbed_modules"
     if MODULES.is_dir():
         if knobbed_modules_dst.exists():
             rmtree_force(knobbed_modules_dst)
-        shutil.copytree(MODULES, knobbed_modules_dst, dirs_exist_ok=True, copy_function=copy_overwrite_readonly)
+        shutil.copytree(
+            MODULES,
+            knobbed_modules_dst,
+            dirs_exist_ok=True,
+            copy_function=copy_overwrite_readonly,
+        )
 
     shim_dir = install_win_shims(build_dir)
     build_env = dict(os.environ)
-    build_env["PATH"] = os.pathsep.join([str(shim_dir), build_env.get("PATH", "")])
+    build_env["PATH"] = os.pathsep.join(
+        [str(shim_dir), build_env.get("PATH", "")]
+    )
 
     # Run config.sh if present
     config_script = build_dir / "config.sh"
@@ -278,16 +343,21 @@ def build(build_dir, rebuild):
         config_args = [sys.executable, str(config_script)]
         if knobbed_modules_dst.is_dir():
             config_args.extend(["--module-dir", str(knobbed_modules_dst)])
-        if (build_dir / "champsim_config_knobbed.json").is_file():
-            config_args.append(str(build_dir / "champsim_config_knobbed.json"))
-        run_stage("configure knobbed ChampSim", config_args, cwd=build_dir, env=build_env)
+        if cfg_dst.is_file():
+            config_args.append(str(cfg_dst))
+        run_stage(
+            "configure knobbed ChampSim",
+            config_args,
+            cwd=build_dir,
+            env=build_env,
+        )
 
     abs_opts = build_dir / "absolute.options"
     if abs_opts.is_file():
         abs_opts.unlink()
 
     ensure_module_decl_inc(build_dir)
-    patch_native_windows_makefile(build_dir)
+    patch_native_windows_makefile(build_dir, exe_name)
 
     jobs = os.environ.get("NUMBER_OF_PROCESSORS") or str(os.cpu_count() or 4)
     run_stage(
@@ -305,11 +375,11 @@ def build(build_dir, rebuild):
         env=build_env,
     )
 
-    exe = find_built_binary(build_dir)
+    exe = find_built_binary(build_dir, exe_name)
     if exe is None or not exe.is_file():
         fail(
             f"Build finished but no knobbed binary was found in {build_dir / 'bin'}; "
-            f"check executable_name in {CONFIG}."
+            f"check executable_name in {config_path}."
         )
     return exe
 
@@ -326,24 +396,33 @@ def load_results(directory):
             continue
         speed = {}
         for name, runs in data["traces"].items():
-            finals = [t[-1] for t in runs if t and math.isfinite(t[-1]) and t[-1] > 0]
-            speed[name] = off / statistics.median(finals) if finals else float("nan")
-        rows.append({
-            "kernel": data["kernel"],
-            "default": off / default if default else float("nan"),
-            "best": off / best,
-            **speed,
-        })
+            finals = [
+                t[-1] for t in runs if t and math.isfinite(t[-1]) and t[-1] > 0
+            ]
+            speed[name] = (
+                off / statistics.median(finals) if finals else float("nan")
+            )
+        rows.append(
+            {
+                "kernel": data["kernel"],
+                "default": off / default if default else float("nan"),
+                "best": off / best,
+                **speed,
+            }
+        )
     return rows
 
 
 def plot(rows, out_png):
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        print("matplotlib not installed; skipping the plot (python -m pip install matplotlib)")
+        print(
+            "matplotlib not installed; skipping the plot (python -m pip install matplotlib)"
+        )
         return
     series = [
         ("default", "default hint"),
@@ -355,10 +434,17 @@ def plot(rows, out_png):
     width = 0.16
     fig, ax = plt.subplots(figsize=(max(6, 1.3 * len(rows)), 4.5))
     for i, (key, label) in enumerate(series):
-        ax.bar([x + (i - 2) * width for x in range(len(rows))], [r.get(key, float("nan")) for r in rows], width, label=label)
+        ax.bar(
+            [x + (i - 2) * width for x in range(len(rows))],
+            [r.get(key, float("nan")) for r in rows],
+            width,
+            label=label,
+        )
     ax.axhline(1.0, color="gray", linewidth=0.8)
     ax.set_xticks(range(len(rows)))
-    ax.set_xticklabels([r["kernel"] for r in rows], rotation=35, ha="right", fontsize=8)
+    ax.set_xticklabels(
+        [r["kernel"] for r in rows], rotation=35, ha="right", fontsize=8
+    )
     ax.set_ylabel("speedup over prefetch off")
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -378,69 +464,194 @@ def report(directory, no_plots):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--trace", nargs="+",
-                        help="ChampSim traces: paths, or bare names like 605.mcf_s-1554B looked up in --trace-dir")
-    parser.add_argument("--trace-dir", default=str(Path.home() / "spec-traces"),
-                        help="where download_spec_traces.ps1 puts traces (default ~/spec-traces)")
-    parser.add_argument("--all", action="store_true", help="tune on every trace in --trace-dir")
-    parser.add_argument("--out", help="results directory (default champsim/results/knob-carbs-windows)")
-    parser.add_argument("--budget", type=int, default=20, help="evaluations per tuner run")
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--trace",
+        nargs="+",
+        help="ChampSim traces: paths, or bare names like 605.mcf_s-1554B looked up in --trace-dir",
+    )
+    parser.add_argument(
+        "--trace-dir",
+        default=str(Path.home() / "spec-traces"),
+        help="where download_spec_traces.ps1 puts traces (default ~/spec-traces)",
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="tune on every trace in --trace-dir"
+    )
+    parser.add_argument(
+        "--out",
+        help="results directory (default champsim/results/knob-carbs-windows)",
+    )
+    parser.add_argument(
+        "--budget", type=int, default=20, help="evaluations per tuner run"
+    )
     parser.add_argument("--seeds", type=int, default=2)
     parser.add_argument("--warmup-instructions", type=int, default=1_000_000)
-    parser.add_argument("--sim-instructions", type=int, default=3_000_000,
-                        help="must fit in the trace after the warmup")
-    parser.add_argument("--exhaustive", action="store_true",
-                        help="simulate every distinct config first (2,305 per trace; ground truth)")
-    parser.add_argument("--jobs", type=int, default=4, help="parallel simulations for --exhaustive")
-    parser.add_argument("--build-dir", default=r"C:\champsim-knobbed-win", help="must not contain spaces")
-    parser.add_argument("--rebuild", action="store_true", help="rebuild even if the binary exists")
-    parser.add_argument("--skip-tests", action="store_true", help="skip flagbench/test_tuners.py")
+    parser.add_argument(
+        "--sim-instructions",
+        type=int,
+        default=3_000_000,
+        help="must fit in the trace after the warmup",
+    )
+    parser.add_argument(
+        "--exhaustive",
+        action="store_true",
+        help="simulate every distinct config first (2,305 per trace; ground truth)",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=4,
+        help="parallel simulations for --exhaustive",
+    )
+    parser.add_argument(
+        "--build-dir",
+        default=r"C:\champsim-knobbed-win",
+        help="must not contain spaces",
+    )
+    parser.add_argument(
+        "--l1only-build-dir",
+        default=r"C:\champsim-knobbed-l1only-win",
+        help="L1-only build dir for --auto-hierarchy (must not contain spaces)",
+    )
+    parser.add_argument(
+        "--auto-hierarchy",
+        action="store_true",
+        help="use full hierarchy for fill_* traces and L1-only for all other pfbench traces",
+    )
+    parser.add_argument(
+        "--config", default=str(CONFIG), help="ChampSim config JSON"
+    )
+    parser.add_argument(
+        "--build-only",
+        action="store_true",
+        help="build the simulator binary and exit",
+    )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="rebuild even if the binary exists",
+    )
+    parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="skip flagbench/test_tuners.py",
+    )
     parser.add_argument("--no-plots", action="store_true")
-    parser.add_argument("--report-only", metavar="DIR",
-                        help="only print the table and plot for an existing results directory (works on any OS)")
+    parser.add_argument(
+        "--report-only",
+        metavar="DIR",
+        help="only print the table and plot for an existing results directory (works on any OS)",
+    )
     args = parser.parse_args()
 
     if args.report_only:
         report(args.report_only, args.no_plots)
         return
-    trace_dir = Path(args.trace_dir).expanduser()
-    if args.all:
-        traces = sorted(
-            p for p in trace_dir.iterdir()
-            if p.is_file() and any(p.name.endswith(s) for s in TRACE_SUFFIXES)
-        )
-        if not traces:
-            fail(f"No trace files ({', '.join(TRACE_SUFFIXES)}) found in {trace_dir}")
-    elif args.trace:
-        traces = [find_trace(t, trace_dir) for t in args.trace]
-    else:
-        parser.error("--trace or --all is required (or use --report-only DIR)")
-    traces = [Path(t).resolve() for t in traces]
     build_dir = Path(args.build_dir)
     if " " in str(build_dir):
         fail(f"--build-dir must not contain spaces: {build_dir}")
+    config_path = Path(args.config).resolve()
+    if not config_path.is_file():
+        fail(f"Config not found: {config_path}")
+
+    if args.build_only:
+        preflight()
+        exe = build(build_dir, args.rebuild, config_path)
+        print(f"\nBuild complete: {exe}")
+        return
+
+    trace_dir = Path(args.trace_dir).expanduser()
+    if args.all:
+        traces = sorted(
+            p
+            for p in trace_dir.iterdir()
+            if p.is_file() and any(p.name.endswith(s) for s in TRACE_SUFFIXES)
+        )
+        if not traces:
+            fail(
+                f"No trace files ({', '.join(TRACE_SUFFIXES)}) found in {trace_dir}"
+            )
+    elif args.trace:
+        traces = [find_trace(t, trace_dir) for t in args.trace]
+    else:
+        parser.error(
+            "--trace, --all, or --build-only is required (or use --report-only DIR)"
+        )
+    traces = [Path(t).resolve() for t in traces]
 
     preflight(traces)
-    exe = build(build_dir, args.rebuild)
+    exe = build(build_dir, args.rebuild, config_path)
+    exe_l1only = exe
+    if args.auto_hierarchy:
+        l1_dir = Path(args.l1only_build_dir)
+        if " " in str(l1_dir):
+            fail(f"--l1only-build-dir must not contain spaces: {l1_dir}")
+        exe_l1only = build(
+            l1_dir,
+            args.rebuild,
+            CHAMPSIM / "champsim_config_knobbed_l1only.json",
+        )
 
-    output = Path(args.out).resolve() if args.out else CHAMPSIM / "results" / "knob-carbs-windows"
+    output = (
+        Path(args.out).resolve()
+        if args.out
+        else CHAMPSIM / "results" / "knob-carbs-windows"
+    )
     output.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, PYTHONPATH=str(ROOT))  # knob_carbs.py imports flagbench.tuners from the repo root
+    env = dict(
+        os.environ, PYTHONPATH=str(ROOT)
+    )  # knob_carbs.py imports flagbench.tuners from the repo root
     for trace in traces:
         kernel = kernel_name(trace)
+        sim_exe = (
+            exe
+            if (
+                not args.auto_hierarchy
+                or kernel.startswith("fill_")
+                or kernel == "filllevel"
+            )
+            else exe_l1only
+        )
         run_stage(
-            f"tuning knobs on {kernel}",
-            [sys.executable, TUNER, "--kernel", kernel, "--trace", trace,
-             "--out", output / f"{kernel}.json", "--binary", exe,
-             "--budget", args.budget, "--seeds", args.seeds,
-             "--warmup", args.warmup_instructions, "--sim", args.sim_instructions,
-             *(("--exhaustive", "--jobs", args.jobs) if args.exhaustive else ())],
-            env=env)
+            f"tuning knobs on {kernel} ({sim_exe.name})",
+            [
+                sys.executable,
+                TUNER,
+                "--kernel",
+                kernel,
+                "--trace",
+                trace,
+                "--out",
+                output / f"{kernel}.json",
+                "--binary",
+                sim_exe,
+                "--budget",
+                args.budget,
+                "--seeds",
+                args.seeds,
+                "--warmup",
+                args.warmup_instructions,
+                "--sim",
+                args.sim_instructions,
+                *(
+                    ("--exhaustive", "--jobs", args.jobs)
+                    if args.exhaustive
+                    else ()
+                ),
+            ],
+            env=env,
+        )
 
     if not args.skip_tests:
-        run_stage("tuner unit tests", [sys.executable, ROOT / "flagbench" / "test_tuners.py"],
-                  cwd=ROOT / "flagbench")
+        run_stage(
+            "tuner unit tests",
+            [sys.executable, ROOT / "flagbench" / "test_tuners.py"],
+            cwd=ROOT / "flagbench",
+        )
 
     print("\n== report")
     report(output, args.no_plots)

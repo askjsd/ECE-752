@@ -21,7 +21,19 @@ static inline const uint8_t *runs_next(runs_t *r) {
     return r->base + s * (uint64_t)r->run * G.line;
 }
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+static double now_ns(void) {
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER t;
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t);
+    return (double)t.QuadPart * 1e9 / (double)freq.QuadPart;
+}
+#else
 static double now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e9 + t.tv_nsec; }
+#endif
 
 /* Phase-changing workload: random, stream, random, stream, ...
  * A purely random phase gives a stream/stride prefetcher nothing to train on, so it

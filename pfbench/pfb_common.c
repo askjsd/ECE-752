@@ -5,11 +5,16 @@
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <linux/perf_event.h>
+#endif
 #ifdef PFB_M5
 #include <gem5/m5ops.h>
 #endif
@@ -102,8 +107,13 @@ void *pfb_alloc(size_t bytes, const char *name) {
     const size_t align = 2u << 20;
     if (bytes == 0) bytes = 1;
     size_t len = (bytes + align - 1) / align * align;
+#ifdef _WIN32
+    uint8_t *raw = (uint8_t *)VirtualAlloc(NULL, len + align, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!raw) die("VirtualAlloc %zu bytes for %s failed", len, name);
+#else
     uint8_t *raw = mmap(NULL, len + align, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (raw == MAP_FAILED) die("mmap %zu bytes for %s failed", len, name);
+#endif
     uint8_t *p = (uint8_t *)(((uintptr_t)raw + align - 1) & ~(uintptr_t)(align - 1));
     memset(p, 0, len);                          /* pre-touch: no first-touch faults in the ROI */
     for (size_t off = 0; off + 8 <= bytes; off += (size_t)G.line)   /* non-zero data -> meaningful checksums */
@@ -133,6 +143,13 @@ static int g_nev;
 static int g_perf_on;
 static char g_perf_msg[160];
 
+#ifdef _WIN32
+static void perf_setup(void) {
+    (void)cli_str("perf", "off", "perf counters: auto (use if permitted) | off");
+    (void)cli_str("pmu-raw", "", "extra raw PMU events name=0xCONFIG,... (Linux only)");
+    (void)g_ev;
+}
+#else
 static void add_ev(const char *name, uint32_t type, uint64_t config) {
     if (g_nev < MAX_EV) { g_ev[g_nev].name = name; g_ev[g_nev].type = type; g_ev[g_nev].config = config; g_ev[g_nev].fd = -1; g_nev++; }
 }
@@ -176,33 +193,51 @@ static void perf_setup(void) {
     }
     g_perf_on = 1;
 }
+#endif
 
 /* ---- ROI ---------------------------------------------------------------------------- */
+#ifdef _WIN32
+static LARGE_INTEGER g_qpc_freq, g_t0_qpc;
+#else
 static struct timespec g_t0;
+#endif
 static int g_roi_state;
 
 __attribute__((noinline, used)) void pfb_roi_begin(void) {
     if (g_roi_state++) die("pfb_roi_begin called twice");
     if (g_perf_msg[0]) info("%s", g_perf_msg);
     fflush(NULL);
+#ifndef _WIN32
     for (int i = 0; g_perf_on && i < g_nev; i++)
         if (g_ev[i].fd >= 0) { ioctl(g_ev[i].fd, PERF_EVENT_IOC_RESET, 0); ioctl(g_ev[i].fd, PERF_EVENT_IOC_ENABLE, 0); }
+#endif
 #ifdef PFB_M5
     m5_work_begin(0, 0);
 #endif
+#ifdef _WIN32
+    QueryPerformanceFrequency(&g_qpc_freq);
+    QueryPerformanceCounter(&g_t0_qpc);
+#else
     clock_gettime(CLOCK_MONOTONIC, &g_t0);
+#endif
     __asm__ volatile("" ::: "memory");
 }
 
 __attribute__((noinline, used)) void pfb_roi_end(uint64_t accesses, uint64_t checksum) {
     __asm__ volatile("" ::: "memory");
+#ifdef _WIN32
+    LARGE_INTEGER t1_qpc;
+    QueryPerformanceCounter(&t1_qpc);
+#else
     struct timespec t1;
     clock_gettime(CLOCK_MONOTONIC, &t1);
+#endif
 #ifdef PFB_M5
     m5_work_end(0, 0);
 #endif
     uint64_t vals[MAX_EV] = {0};
     int ok[MAX_EV] = {0};
+#ifndef _WIN32
     for (int i = 0; g_perf_on && i < g_nev; i++) {
         if (g_ev[i].fd < 0) continue;
         ioctl(g_ev[i].fd, PERF_EVENT_IOC_DISABLE, 0);
@@ -212,9 +247,14 @@ __attribute__((noinline, used)) void pfb_roi_end(uint64_t accesses, uint64_t che
             ok[i] = 1;
         }
     }
+#endif
     pfb_sink = checksum;
     g_roi_state++;
+#ifdef _WIN32
+    double ns = (double)(t1_qpc.QuadPart - g_t0_qpc.QuadPart) * 1e9 / (double)g_qpc_freq.QuadPart;
+#else
     double ns = (t1.tv_sec - g_t0.tv_sec) * 1e9 + (t1.tv_nsec - g_t0.tv_nsec);
+#endif
     printf("RESULT kernel=%s%s accesses=%llu time_ns=%.0f ns_per_access=%.3f",
            G.kernel, g_kv, (unsigned long long)accesses, ns, accesses ? ns / accesses : 0.0);
     for (int i = 0; i < g_nev; i++)

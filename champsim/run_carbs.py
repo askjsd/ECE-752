@@ -192,6 +192,11 @@ def main():
     parser.add_argument(
         "--champsim-root", required=True, help="ChampSim checkout"
     )
+    parser.add_argument(
+        "--simulator",
+        default=None,
+        help="Path to ChampSim simulator binary (defaults to <champsim-root>/bin/champsim)",
+    )
     parser.add_argument("--pin", required=True, help="Intel PIN root")
     parser.add_argument(
         "--tracer",
@@ -339,7 +344,11 @@ def main():
         objcopy = shutil.which("objcopy") or shutil.which("llvm-objcopy")
         objcopy_run = command
     pin_bin = executable(pin, "pin")
-    simulator = executable(os.path.join(champsim, "bin"), "champsim")
+    simulator = (
+        os.path.abspath(args.simulator)
+        if args.simulator
+        else executable(os.path.join(champsim, "bin"), "champsim")
+    )
     for path in (source, tracer, pin_bin, simulator):
         if not os.path.exists(path):
             raise SystemExit("Required path does not exist: " + path)
