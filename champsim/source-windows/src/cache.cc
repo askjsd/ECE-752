@@ -328,16 +328,19 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
 
   auto mshr_pkt = mshr_and_forward_packet(handle_pkt);
 
-  // check mshr
-  auto fill_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_address(handle_pkt.address));
-  bool mshr_full = (MSHR.size() == MSHR_SIZE);
+  // Search each queue against its own end iterator.
+  const auto matches = matches_address(handle_pkt.address);
+  const auto mshr_entry = std::find_if(MSHR.begin(), MSHR.end(), matches);
+  auto* fill_entry = mshr_entry == MSHR.end() ? nullptr : &*mshr_entry;
+  const bool mshr_full = MSHR.size() == MSHR_SIZE;
 
-  // check inflight fills
-  if (fill_entry == MSHR.end()) {
-    fill_entry = std::find_if(inflight_fills.begin(), inflight_fills.end(), matches_address(handle_pkt.address));
+  if (fill_entry == nullptr) {
+    const auto pending_fill = std::find_if(inflight_fills.begin(), inflight_fills.end(), matches);
+    if (pending_fill != inflight_fills.end())
+      fill_entry = &*pending_fill;
   }
 
-  if (fill_entry != inflight_fills.end()) // miss or fill already inflight
+  if (fill_entry != nullptr) // miss or fill already inflight
   {
     if (fill_entry->type == access_type::PREFETCH && handle_pkt.type != access_type::PREFETCH) {
       // Mark the prefetch as useful
@@ -371,6 +374,15 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
   return true;
+}
+
+bool CACHE::has_pending_request(champsim::address module_addr) const
+{
+  auto matches = [this, module_addr](const auto& entry) {
+    return champsim::block_number{virtual_prefetch ? entry.v_address : entry.address} == champsim::block_number{module_addr};
+  };
+  auto contains = [&matches](const auto& queue) { return std::any_of(queue.begin(), queue.end(), matches); };
+  return contains(internal_PQ) || contains(inflight_tag_check) || contains(translation_stash) || contains(MSHR) || contains(inflight_fills);
 }
 
 bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
