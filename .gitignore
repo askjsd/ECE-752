@@ -54,3 +54,18 @@ champsim/source-linux/bin
 champsim/source-linux/vcpkg
 champsim/source-linux/vcpkg_installed
 champsim/source-linux/tracer/pin/obj-intel64
+
+# Build outputs: never commit (rebuild with champsim/build_knobbed.sh or the Windows runners)
+.csconfig/
+vcpkg_installed/
+obj-intel64/
+champsim/.upstream-windows/
+champsim/champsim-source/
+champsim/source-windows/knobbed_modules/
+homeyogevchampsim-knobbed-build/
+*.exe
+*.dll
+*.obj
+*.lib
+*.pdb
+*.bak
