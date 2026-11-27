@@ -105,8 +105,14 @@ All commands run from the repo root (`ece 752/`). Steps 1-3 are one-time setup.
    (writes a JSON file with every result):
    `$PY champsim/knob_carbs.py --kernel mykernel --trace sample.trace --out champsim/results/knob-carbs/mykernel.json --budget 30 --seeds 2`
 
-   Add `--exhaustive --jobs 8` to first simulate all 2,305 distinct configs (ground truth); the tuners then
-   run against that table for free. That is about 2,300 simulations per trace.
+   Add `--exhaustive` to first simulate all 2,305 distinct configs (ground truth); the tuners then
+   run against that table for free. That is about 2,300 simulations per trace (154 s on 24 threads for
+   a 100K-instruction pfbench trace).
+
+   `--jobs` (default: all CPUs) sets how many simulations run at once: the exhaustive sweep uses all of
+   them, and the 3 tuners x `--seeds` runs go side by side. Results do not depend on `--jobs`. If
+   `--warmup` + `--sim` is longer than the trace, both are scaled down to fit, so ChampSim never replays
+   a short trace.
 
 6. Print the results table for a whole folder:
    `$PY champsim/knob_carbs.py --summarize champsim/results/knob-carbs`
@@ -155,8 +161,10 @@ It does not compile or trace benchmarks: it takes ChampSim traces you already ha
    `python -m pip install numpy matplotlib`
 2. Run it from the repo root (the first run builds, which takes a few minutes):
    `python champsim\run_knob_tuning_windows.py --trace C:\traces\605.mcf_s-1554B.champsimtrace.xz`
-3. Options: several traces (`--trace a.xz b.xz`), `--budget` and `--seeds` for the search, `--exhaustive --jobs 8` for the
-   ground-truth sweep, `--rebuild`, `--skip-tests`, `--no-plots`, and `--report-only <results folder>` to print the table
+3. Options: several traces (`--trace a.xz b.xz`), `--budget` and `--seeds` for the search, `--exhaustive` for the
+   ground-truth sweep, `--trace-jobs` (traces tuned at once) and `--jobs` (simulations at once per trace). By default
+   they multiply to about the CPU count: 3 x `--seeds` simulations per trace and the rest spent on more traces, or one
+   trace at a time on every CPU with `--exhaustive`. Each trace logs to `<out>/<kernel>.log`. Also `--rebuild`, `--skip-tests`, `--no-plots`, and `--report-only <results folder>` to print the table
    and draw `speedup.png` for existing results (this mode works on any OS and was tested on Linux).
 
 What differs from Linux, and what could still go wrong:

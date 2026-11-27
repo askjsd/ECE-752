@@ -26,7 +26,18 @@ canonical(cid) zeroes fields that cannot affect the result (everything when the
 source is off; confirm and fallback for next-line), so equivalent configs share one
 simulation and the distinct-config count is exact.
 
-Usage (one trace; run several in parallel for several kernels):
+Parallelism: --jobs simulations run at once. The exhaustive sweep uses all of them,
+and the tuner runs (3 tuners x --seeds) run side by side, each one still sequential
+inside. Results do not depend on --jobs: every tuner has its own seeded RNG and
+every simulation is deterministic. Two runs that ask for the same config at the same
+time share one simulation.
+
+Trace length: if --warmup + --sim is longer than the trace, both are scaled down
+to fit (same ratio), because ChampSim would otherwise replay the trace from its
+start. Uncompressed traces are sized from the file (64 bytes per instruction);
+.xz traces are decompressed once to count.
+
+Usage (one trace; run_knob_tuning_windows.py runs several traces at once):
   knob_carbs.py --kernel k_mix --trace k_mix.trace --out results/knob-carbs/k_mix.json
   knob_carbs.py --kernel k_mix --trace k_mix.trace --out ... --exhaustive --jobs 8
   knob_carbs.py --summarize results/knob-carbs        # table over every *.json there
@@ -37,8 +48,10 @@ import math
 import os
 import re
 import statistics
+import lzma
 import subprocess
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -113,8 +126,37 @@ def all_canonical():
 DEFAULT_ID = pack(dict(source=2, trigger=0, level=1, fill=1, throttle=1, confirm=1, fallback=0, insert=0))
 
 
+RECORD_BYTES = 64  # one ChampSim input_instr
+
+
+def trace_records(path):
+    """Number of instructions in a ChampSim trace (.xz is decompressed once to count)."""
+    path = str(path)
+    if path.endswith(".xz"):
+        n = 0
+        with lzma.open(path, "rb") as f:
+            while True:
+                chunk = f.read(1 << 24)
+                if not chunk:
+                    break
+                n += len(chunk)
+        return n // RECORD_BYTES
+    return os.path.getsize(path) // RECORD_BYTES
+
+
+def fit_to_trace(warmup, sim, records):
+    """Scale warmup and sim down (same ratio) so that they fit in the trace."""
+    if records <= 0 or warmup + sim <= records:
+        return warmup, sim
+    w = int(records * warmup / (warmup + sim))
+    return w, max(1, records - w)
+
+
 class Simulator:
-    """Runs champsim_knobbed on one trace with a given hint; caches results on disk."""
+    """Runs champsim_knobbed on one trace with a given hint; caches results on disk.
+
+    Safe to call from several threads: results are cached under a lock, and a config
+    that is already being simulated is waited for rather than simulated twice."""
 
     def __init__(self, binary, trace, warmup, sim, cache_path):
         self.binary, self.trace, self.warmup, self.sim = binary, trace, warmup, sim
@@ -123,22 +165,39 @@ class Simulator:
         if self.cache_path.exists():
             self.cache = json.loads(self.cache_path.read_text()).get("cache", {})
         self.runs = 0
+        self.lock = threading.Lock()
+        self.inflight = {}  # key -> Event set when that simulation finishes
 
     def run(self, hint, key, insert="mru"):
         """Return cycles for `hint` (a KNOBBED_HINT string) or None on failure."""
-        if key in self.cache:
-            return self.cache[key]
-        env = dict(os.environ, KNOBBED_HINT=hint, KNOBBED_INSERT=insert)
-        out = subprocess.run(
-            [self.binary, "--warmup-instructions", str(self.warmup),
-             "--simulation-instructions", str(self.sim), self.trace],
-            env=env, capture_output=True, text=True,
-        ).stdout
-        m = re.search(r"^CPU 0 cumulative IPC: [0-9.]+ instructions: \d+ cycles: (\d+)", out, re.M)
-        cycles = float(m.group(1)) if m else None
-        self.runs += 1
-        self.cache[key] = cycles
-        return cycles
+        with self.lock:
+            if key in self.cache:
+                return self.cache[key]
+            ev = self.inflight.get(key)
+            owner = ev is None
+            if owner:
+                ev = self.inflight[key] = threading.Event()
+        if not owner:
+            ev.wait()
+            with self.lock:
+                return self.cache.get(key)
+        try:
+            env = dict(os.environ, KNOBBED_HINT=hint, KNOBBED_INSERT=insert)
+            out = subprocess.run(
+                [self.binary, "--warmup-instructions", str(self.warmup),
+                 "--simulation-instructions", str(self.sim), self.trace],
+                env=env, capture_output=True, text=True,
+            ).stdout
+            m = re.search(r"^CPU 0 cumulative IPC: [0-9.]+ instructions: \d+ cycles: (\d+)", out, re.M)
+            cycles = float(m.group(1)) if m else None
+            with self.lock:
+                self.runs += 1
+                self.cache[key] = cycles
+            return cycles
+        finally:
+            with self.lock:
+                del self.inflight[key]
+            ev.set()
 
 
 class KnobLUT:
@@ -167,17 +226,33 @@ class KnobLUT:
 def run_kernel(args):
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    sim = Simulator(args.binary, args.trace, args.warmup, args.sim, out)
-    ref = {
-        "prefetch_off": sim.run("source=off", "off"),
-        "default_hint": sim.run("", "default"),
-    }
-    results = {"carbs": [], "random": [], "hillclimb": []}
+    warmup, simn = args.warmup, args.sim
+    records = trace_records(args.trace)
+    if warmup + simn > records:
+        warmup, simn = fit_to_trace(warmup, simn, records)
+        print(f"{args.kernel}: trace has {records} instructions; using warmup {warmup} + sim {simn} "
+              f"instead of {args.warmup} + {args.sim} so ChampSim does not replay it", flush=True)
+    sim = Simulator(args.binary, args.trace, warmup, simn, out)
+    with ThreadPoolExecutor(2) as ex:
+        f_off = ex.submit(sim.run, "source=off", "off")
+        f_def = ex.submit(sim.run, "", "default")
+        ref = {"prefetch_off": f_off.result(), "default_hint": f_def.result()}
+    tuner_fns = (("carbs", tuners.carbs, {"bootstrap": False}),
+                 ("random", tuners.random_search, {}),
+                 ("hillclimb", tuners.hill_climb, {}))
+    # one slot per (tuner, seed), filled as runs finish; seed order is kept
+    results = {name: [None] * args.seeds for name, _, _ in tuner_fns}
+    save_lock = threading.Lock()
 
     def save():
-        out.write_text(json.dumps({"kernel": args.kernel, "reference": ref, "traces": results,
-                                   "cache": sim.cache, "budget": args.budget, "seeds": args.seeds,
-                                   "n_bits": N_BITS, "encoding": "v2"}))
+        with save_lock, sim.lock:
+            data = json.dumps({"kernel": args.kernel, "reference": ref,
+                               "traces": {k: [t for t in v if t is not None] for k, v in results.items()},
+                               "cache": dict(sim.cache), "budget": args.budget, "seeds": args.seeds,
+                               "warmup": warmup, "sim": simn, "trace_records": records,
+                               "n_bits": N_BITS, "encoding": "v2"})
+        with save_lock:
+            out.write_text(data)
 
     if args.exhaustive:  # ground truth: simulate every distinct config once
         todo = [c for c in all_canonical() if str(c) not in sim.cache]
@@ -189,13 +264,18 @@ def run_kernel(args):
             for i, _ in enumerate(ex.map(one, todo), 1):
                 if i % 50 == 0:
                     save()
-    for name, fn, kw in (("carbs", tuners.carbs, {"bootstrap": False}),
-                         ("random", tuners.random_search, {}),
-                         ("hillclimb", tuners.hill_climb, {})):
-        for seed in range(args.seeds):
-            lut = KnobLUT(sim)
-            results[name].append(fn(lut, args.budget, seed, **kw))
-            save()
+
+    def tune(name, fn, kw, seed):
+        results[name][seed] = fn(KnobLUT(sim), args.budget, seed, **kw)
+        save()
+
+    # Each tuner run is sequential (every step depends on the last), but the 3 x seeds
+    # runs are independent, so they run side by side, up to --jobs at once.
+    with ThreadPoolExecutor(max(1, args.jobs)) as ex:
+        futs = [ex.submit(tune, name, fn, kw, seed)
+                for name, fn, kw in tuner_fns for seed in range(args.seeds)]
+        for f in futs:
+            f.result()  # re-raise any error
     # also record which config was best, for reading the result
     valid = {k: v for k, v in sim.cache.items() if k.isdigit() and v is not None}
     best_id = int(min(valid, key=valid.get)) if valid else None
@@ -242,7 +322,9 @@ def main():
     ap.add_argument("--warmup", type=int, default=100_000)
     ap.add_argument("--sim", type=int, default=2_000_000, help="simulated instructions (must fit in the trace after warmup)")
     ap.add_argument("--exhaustive", action="store_true", help="first simulate every distinct config (ground truth)")
-    ap.add_argument("--jobs", type=int, default=4, help="parallel simulations for --exhaustive")
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4,
+                    help="simulations at once: the exhaustive sweep, and tuner runs side by side "
+                         "(default: all CPUs)")
     ap.add_argument("--summarize", metavar="DIR")
     args = ap.parse_args()
     if args.summarize:

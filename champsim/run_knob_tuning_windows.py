@@ -20,6 +20,17 @@ Examples (PowerShell, from the repo root):
   python champsim\run_knob_tuning_windows.py --trace C:\traces\605.mcf_s-1554B.champsimtrace.xz
   python champsim\run_knob_tuning_windows.py --trace a.trace b.trace --budget 30 --seeds 3
   python champsim\run_knob_tuning_windows.py --trace k_stencil.trace --exhaustive --jobs 8
+  python champsim\run_knob_tuning_windows.py --all --auto-hierarchy --trace-jobs 4 --jobs 6
+
+Parallelism: --trace-jobs traces are tuned at once, and each runs up to --jobs
+simulations at once (its tuner runs side by side, or its exhaustive sweep). By
+default the two multiply to about the number of CPUs: without --exhaustive each
+trace gets 3 x --seeds slots (one per tuner run) and the rest go to more traces;
+with --exhaustive one trace at a time gets every CPU. Each trace's output goes to
+<out>/<kernel>.log.
+
+If --warmup-instructions + --sim-instructions is longer than a trace, knob_carbs.py
+scales both down to fit, so ChampSim never replays a short trace.
   python champsim\run_knob_tuning_windows.py --report-only champsim\results\knob-carbs-spec-v2
 """
 
@@ -33,6 +44,7 @@ import stat
 import statistics
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -494,7 +506,7 @@ def main():
         "--sim-instructions",
         type=int,
         default=3_000_000,
-        help="must fit in the trace after the warmup",
+        help="scaled down with the warmup if the trace is shorter",
     )
     parser.add_argument(
         "--exhaustive",
@@ -504,8 +516,14 @@ def main():
     parser.add_argument(
         "--jobs",
         type=int,
-        default=4,
-        help="parallel simulations for --exhaustive",
+        default=None,
+        help="simulations at once per trace (default: 3 x --seeds, or all CPUs with --exhaustive)",
+    )
+    parser.add_argument(
+        "--trace-jobs",
+        type=int,
+        default=None,
+        help="traces tuned at once (default: CPUs / --jobs, at least 1)",
     )
     parser.add_argument(
         "--build-dir",
@@ -605,7 +623,17 @@ def main():
     env = dict(
         os.environ, PYTHONPATH=str(ROOT)
     )  # knob_carbs.py imports flagbench.tuners from the repo root
-    for trace in traces:
+    ncpu = os.cpu_count() or 4
+    jobs = args.jobs or (ncpu if args.exhaustive else min(ncpu, 3 * args.seeds))
+    trace_jobs = args.trace_jobs or max(1, ncpu // jobs)
+    trace_jobs = min(trace_jobs, len(traces))
+    print(
+        f"\n== tuning knobs on {len(traces)} trace(s): {trace_jobs} at a time, "
+        f"up to {jobs} simulations each",
+        flush=True,
+    )
+
+    def tune(trace):
         kernel = kernel_name(trace)
         sim_exe = (
             exe
@@ -616,35 +644,49 @@ def main():
             )
             else exe_l1only
         )
-        run_stage(
-            f"tuning knobs on {kernel} ({sim_exe.name})",
-            [
-                sys.executable,
-                TUNER,
-                "--kernel",
-                kernel,
-                "--trace",
-                trace,
-                "--out",
-                output / f"{kernel}.json",
-                "--binary",
-                sim_exe,
-                "--budget",
-                args.budget,
-                "--seeds",
-                args.seeds,
-                "--warmup",
-                args.warmup_instructions,
-                "--sim",
-                args.sim_instructions,
-                *(
-                    ("--exhaustive", "--jobs", args.jobs)
-                    if args.exhaustive
-                    else ()
-                ),
-            ],
-            env=env,
-        )
+        cmd = [
+            sys.executable,
+            TUNER,
+            "--kernel",
+            kernel,
+            "--trace",
+            trace,
+            "--out",
+            output / f"{kernel}.json",
+            "--binary",
+            sim_exe,
+            "--budget",
+            args.budget,
+            "--seeds",
+            args.seeds,
+            "--warmup",
+            args.warmup_instructions,
+            "--sim",
+            args.sim_instructions,
+            "--jobs",
+            jobs,
+            *(("--exhaustive",) if args.exhaustive else ()),
+        ]
+        log = output / f"{kernel}.log"
+        with open(log, "w", encoding="utf-8") as f:
+            rc = subprocess.run(
+                [str(a) for a in cmd], env=env, stdout=f, stderr=subprocess.STDOUT
+            ).returncode
+        if rc:
+            raise RuntimeError(f"exit {rc}, see {log}")
+        return f"{kernel} ({sim_exe.name})"
+
+    failed = []
+    with ThreadPoolExecutor(max_workers=trace_jobs) as ex:
+        futs = {ex.submit(tune, t): kernel_name(t) for t in traces}
+        for i, fut in enumerate(as_completed(futs), 1):
+            try:
+                print(f"[{i}/{len(futs)}] tuned {fut.result()}", flush=True)
+            except Exception as e:
+                failed.append(futs[fut])
+                print(f"[{i}/{len(futs)}] FAILED {futs[fut]}: {e}", flush=True)
+    if failed:
+        fail(f"{len(failed)} trace(s) failed: {', '.join(failed)}")
 
     if not args.skip_tests:
         run_stage(
