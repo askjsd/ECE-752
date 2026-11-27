@@ -368,7 +368,7 @@ def build(build_dir, rebuild, config_path=CONFIG):
             jobs,
             "CXX=clang++",
             "CC=clang",
-            "CXXFLAGS=-w -Wno-c++11-narrowing -fms-runtime-lib=dll",
+            "CXXFLAGS=-O3 -w -Wno-c++11-narrowing -fms-runtime-lib=dll",
             "LDLIBS=-lshell32",
         ],
         cwd=build_dir,
