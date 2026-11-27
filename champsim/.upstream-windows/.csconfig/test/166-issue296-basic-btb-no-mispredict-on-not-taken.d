@@ -1,0 +1,28 @@
+.csconfig/test/166-issue296-basic-btb-no-mispredict-on-not-taken.d \
+  .csconfig/test/166-issue296-basic-btb-no-mispredict-on-not-taken.o: \
+  test\cpp\src\166-issue296-basic-btb-no-mispredict-on-not-taken.cc \
+  test\cpp\src\..\..\..\btb\basic_btb\basic_btb.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\address.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\champsim.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\extent.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\to_underlying.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\units.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\bit_enum.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\ratio.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\bits.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\..\msl\bits.h \
+  test\cpp\src\..\..\..\btb\basic_btb\direct_predictor.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\msl\lru_table.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\msl\bits.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\detect.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\span.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\bandwidth.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\type_traits.h \
+  test\cpp\src\..\..\..\btb\basic_btb\indirect_predictor.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\modules.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\access_type.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\block.h \
+  test\cpp\src\..\..\..\btb\basic_btb\return_stack.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\instruction.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\chrono.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\trace_instruction.h

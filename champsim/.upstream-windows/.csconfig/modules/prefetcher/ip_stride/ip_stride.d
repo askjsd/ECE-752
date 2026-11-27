@@ -1,0 +1,30 @@
+.csconfig/modules/prefetcher/ip_stride/ip_stride.d \
+  .csconfig/modules/prefetcher/ip_stride/ip_stride.o: \
+  prefetcher\ip_stride\ip_stride.cc prefetcher\ip_stride\ip_stride.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\address.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\champsim.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\extent.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\to_underlying.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\units.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\bit_enum.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\ratio.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\bits.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\..\msl\bits.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\modules.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\access_type.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\block.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\msl\lru_table.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\msl\bits.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\detect.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\span.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\bandwidth.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\util\type_traits.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\cache.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\cache_builder.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\channel.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\chrono.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\cache_stats.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\event_counter.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\operable.h \
+  C:\Users\yogev\Documents\ECE-752\champsim\.upstream-windows\inc\waitable.h \
+  .csconfig\module_decl.inc
