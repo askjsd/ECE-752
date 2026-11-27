@@ -1,0 +1,6 @@
+pfbench
+pfbench_noswpf
+pfbench_m5
+pfbench.dis
+results/
+traces/
