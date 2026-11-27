@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run the pfbench suite and collect RESULT lines into a CSV.
+"""Run the pfbench suite natively and collect RESULT lines into a CSV.
+
+Runs are sequential on purpose: benchmarks running together would share L3 and
+memory bandwidth and measure each other. For ChampSim (tracing and simulation,
+which do run in parallel) use run_champsim.py.
 
   ./run_all.py                          # target geometry (2^9/2^12/2^14 lines), all kernels
                                         # (all but filllevel are L1-only studies: simulate them
@@ -7,8 +11,6 @@
   ./run_all.py --geometry host --cpu 2  # size working sets for this machine, pin to CPU 2
   ./run_all.py --only gather,jump --repeat 5
   ./run_all.py --dry-run                # print the commands only
-  # one ChampSim trace per benchmark, starting at the ROI:
-  DR=~/dynamorio ./run_all.py --wrap "../champsim/dr_trace/trace_dr.sh -o traces/{name}.champsim.xz -S pfb_roi_begin -t 20000000 --"
 
 Per-run stdout/stderr (including REGION and PHASE lines) is kept in <out>/logs/.
 """

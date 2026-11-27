@@ -5,10 +5,15 @@ Usage (PowerShell, from repo root):
   python pfbench\\trace_pin_windows.py
   python pfbench\\trace_pin_windows.py --only gather,jump
   python pfbench\\trace_pin_windows.py --skip-instructions 100000 --trace-instructions 2000000
+  python pfbench\\trace_pin_windows.py --jobs 8     # trace 8 benchmarks at a time
+
+Traces are independent, so they run in parallel (--jobs). Native timing runs are
+not done here; those belong in run_all.py and must stay sequential.
 """
 
 import argparse
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import shutil
 import subprocess
 import sys
@@ -130,6 +135,13 @@ def main():
     ap.add_argument(
         "--force", action="store_true", help="Regenerate existing traces"
     )
+    ap.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=max(1, (os.cpu_count() or 2) // 2),
+        help="Benchmarks traced in parallel (default: half the logical CPUs)",
+    )
     args = ap.parse_args()
 
     if not TRACER.is_file():
@@ -146,14 +158,15 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     pin_exe = pin_dir / "pin.exe"
 
-    for i, (name, kernel, kargs, which) in enumerate(suite, 1):
+    jobs = []
+    for name, kernel, kargs, which in suite:
         trace_path = out_dir / f"{name}.champsimtrace"
         if (
             trace_path.is_file()
             and trace_path.stat().st_size > 0
             and not args.force
         ):
-            print(f"[{i}/{len(suite)}] Reusing {trace_path.name}")
+            print(f"Reusing {trace_path.name}")
             continue
         exe = HERE / (
             "pfbench_noswpf.exe" if which == "noswpf" else "pfbench.exe"
@@ -173,8 +186,32 @@ def main():
             kernel,
             *kargs,
         ]
-        print(f"[{i}/{len(suite)}] Tracing {name} ...", flush=True)
-        subprocess.run(cmd, check=True)
+        jobs.append((name, cmd, out_dir / f"{name}.trace.log"))
+
+    def run(job):
+        name, cmd, log = job
+        with open(log, "w") as f:
+            rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
+        if rc:
+            trace = Path(cmd[cmd.index("-o") + 1])
+            if trace.exists():
+                trace.unlink()  # never reuse a partial trace
+            raise RuntimeError(f"exit {rc}, see {log}")
+        return name
+
+    failed = []
+    print(f"Tracing {len(jobs)} benchmarks, {args.jobs} at a time", flush=True)
+    with ThreadPoolExecutor(max_workers=args.jobs) as ex:
+        futs = {ex.submit(run, job): job[0] for job in jobs}
+        for i, fut in enumerate(as_completed(futs), 1):
+            try:
+                fut.result()
+                print(f"[{i}/{len(jobs)}] Traced {futs[fut]}", flush=True)
+            except Exception as e:
+                failed.append(futs[fut])
+                print(f"[{i}/{len(jobs)}] FAILED {futs[fut]}: {e}", flush=True)
+    if failed:
+        raise SystemExit(f"{len(failed)} trace(s) failed: {', '.join(failed)}")
 
     print(f"\nDone. Traces in {out_dir}")
 

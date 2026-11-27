@@ -139,23 +139,27 @@ measured loop. Setup and warm-up stay outside.
   Pin to a P-core on this hybrid i9-12900 (`--cpu 2`, CPUs 0–15 are P-core threads).
 - **gem5:** `make m5 M5_LIB=.../libm5.a` adds `m5_work_begin/end` (needs an x86
   `util/m5` build).
-- **ChampSim:** trace from the ROI symbol (non-PIE build):
+- **ChampSim:** trace exactly the ROI, from `pfb_roi_begin` to `pfb_roi_end`
+  (non-PIE build):
 
   ```bash
   export DR=~/pin-dl/dr/DynamoRIO-Linux-11.3.0-1 PY=~/pin-dl/venv/bin/python \
          LD_LIBRARY_PATH=~/pin-dl/libs/usr/lib/x86_64-linux-gnu
-  ../champsim/dr_trace/trace_dr.sh -o gather.champsim.xz -S pfb_roi_begin -t 2000000 -W 50000000 \
-      -- ./pfbench gather --dist=16
+  ./run_champsim.py                 # every benchmark: trace + simulate, in parallel
+  # or one by hand:
+  ../champsim/dr_trace/trace_dr.sh -o gather.champsim.xz -S pfb_roi_begin -E pfb_roi_end \
+      -t 5000000 -- ./pfbench gather --dist=16
   KNOBBED_HINT="source=stride,level=4,throttle=0" \
       ~/champsim-knobbed-l1only/bin/champsim_knobbed_l1only \
-      --warmup-instructions 500000 --simulation-instructions 1500000 gather.champsim.xz
-  # or every benchmark:
-  ./run_all.py --wrap "../champsim/dr_trace/trace_dr.sh -o traces/{name}.champsim.xz -S pfb_roi_begin -t 2000000 --"
+      --warmup-instructions 12000 --simulation-instructions 48000 gather.champsim.xz
   ```
 
-  `-W` must cover the setup before the ROI as well as the traced instructions.
-  Keep `-t` within the ROI (each RESULT line reports `accesses`, at about 3–10
-  instructions per access).
+  `-E` ends the trace at `pfb_roi_end`, so it holds no exit code; `-t` is only a
+  cap. `-W` (default 50M) must cover the setup before the ROI (up to 12M
+  instructions, for `fill_random`) plus the traced part. The converter prints
+  `wrote N records`; keep warm-up + simulation within N, because with
+  `--simulation-instructions` ChampSim replays the trace from the start when it
+  runs out.
 
 ### Caveat: software prefetches in ChampSim traces
 
@@ -172,15 +176,38 @@ blocking prefetches stalls retirement. A planned fix is to tag prefetch records 
 `to_champsim.py` and have `ooo_cpu` issue them as non-blocking L1D prefetches
 (ChampSim's input format has no prefetch flag).
 
-## Runner
+## Runners
 
-`run_all.py` runs 56 configurations (the kernel defaults plus sweeps of
-software-prefetch distance, step size k and locality, burst length, `stream_holes --gap`, `late --work`,
-pollution-run length and fill-level ablations). It writes
-`results/results.csv` with one column per RESULT key, keeps every run's log in
-`results/logs/`, and supports `--only`, `--repeat`, `--cpu`,
-`--geometry host`, `--wrap` and `--dry-run`. Options after `--` are passed to
-every run.
+**Native: `run_all.py`, one run at a time on purpose.** Benchmarks running together
+would share L3, memory bandwidth and the memory controller, so their timings would
+measure each other. It runs 56 configurations (the kernel defaults plus sweeps of
+software-prefetch distance, step size k and locality, burst length,
+`stream_holes --gap`, `late --work`, pollution-run length and fill-level ablations),
+writes `results/results.csv` with one column per RESULT key, keeps every log in
+`results/logs/`, and supports `--only`, `--repeat`, `--cpu`, `--geometry host` and
+`--dry-run`. Options after `--` are passed to every run. The whole suite takes
+about 0.15 s.
+
+**ChampSim: `run_champsim.py`, in parallel.** Tracing and simulation are
+deterministic and independent, so it runs `--trace-jobs` traces (default half the
+logical CPUs; each uses about 2 cores) and then `-j` simulations at a time
+(default all CPUs). For the same 56 configurations it:
+
+1. traces each ROI with DynamoRIO into `traces/` (cached: redone only when the
+   command or the pfbench binary changes, or with `--force-trace`);
+2. simulates each trace once per `--hint NAME=HINT` (default `off=source=off` and
+   `default=`, the knobbed module's built-in hint). The L1-only build is used for
+   everything except `filllevel`, which uses the full hierarchy. The first 20% of
+   each trace is warm-up (`--warmup-frac`), or half for `chase` and `jump`, whose
+   first traversal is what a Markov prefetcher learns from;
+3. writes `results/champsim/results.csv`: IPC, cycles, per-level load
+   hits and misses, L1D prefetches issued, useful and useless, and knobbed's
+   accuracy, coverage and timeliness, one row per benchmark and hint.
+
+**Windows: `trace_pin_windows.py`** builds `pfbench.exe` with clang and traces
+the same 56 configurations with Intel PIN, `--jobs` at a time. Its traces start
+a fixed `--skip-instructions` after process start, not at `pfb_roi_begin`, so
+they include setup code (see Status).
 
 ## Status
 
@@ -205,9 +232,13 @@ every run.
 
 **Not yet done**
 
-- Simulating the whole suite in ChampSim. The stride pathologies, `bursts`,
-  `stream`/`stream_rev`, `phase`, `pollute`, `late`, `scatter`, `gather2` and
-  `filllevel` have been run natively only.
+- Checking the ChampSim results in detail. `run_champsim.py` has run the whole
+  suite (56 traces, 2 hints: tracing 569 s with 12 traces at a time, simulation
+  65 s), but only the summary numbers have been looked at.
+- Windows traces start at a fixed instruction count, not at `pfb_roi_begin`. Setup
+  takes 0.25M–12M instructions, so with the default `-s 100000 -t 2000000` most
+  traces are mostly setup and the `gather2_*` and `fill_*` traces miss the ROI
+  entirely. The PIN tracer needs a start-at-symbol option.
 - Non-blocking software prefetches in ChampSim (see the caveat above).
 
 **Caveats**
@@ -219,6 +250,9 @@ every run.
 - `jump --k` above 6 needs `--node-bytes=128`.
 - Avoid large power-of-two strides: they map every access to one DRAM bank.
 - `filllevel` needs the full hierarchy. Every other kernel is an L1-only study.
+- `pollute_*`, `phase*`, `stream_holes_*` and `fill_*` (except `fill_r1_only`) have
+  ROIs longer than the default 5M-instruction trace cap, so their traces hold the
+  first 5M instructions of the ROI.
 - Native runs still have L2 and L3 behind L1, so a native L1 miss is usually an L2
   hit, not a DRAM access.
 - `~/champsim-knobbed-windows` was built before virtual-only mode was hard-wired.
