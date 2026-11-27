@@ -6,6 +6,8 @@
 #   -s SKIP     instructions to skip (counted from process start, or from SYMBOL if -S is given)
 #   -t COUNT    instructions to write (default 1000000)
 #   -S SYMBOL   start counting at the first call of this function (needs a symbol table; non-PIE)
+#   -E SYMBOL   end the trace at the first call of this function after the start, even if
+#               fewer than COUNT instructions were written (e.g. -S roi_begin -E roi_end)
 #   -P PRESKIP  with -S: let DynamoRIO skip this many instructions before recording
 #               (must stay below the symbol's first call; saves conversion time)
 #   -W WINDOW   with -S: how many instructions DynamoRIO records after PRESKIP
@@ -15,12 +17,12 @@ set -euo pipefail
 DR=${DR:?set DR to the extracted DynamoRIO directory}
 PY=${PY:-python3}
 HERE=$(cd "$(dirname "$0")" && pwd)
-SKIP=0; COUNT=1000000; SYM=""; PRE=0; WINDOW=50000000; OUT=""
-while getopts "o:s:t:S:P:W:" opt; do
-  case $opt in o) OUT=$OPTARG;; s) SKIP=$OPTARG;; t) COUNT=$OPTARG;; S) SYM=$OPTARG;; P) PRE=$OPTARG;; W) WINDOW=$OPTARG;; *) exit 2;; esac
+SKIP=0; COUNT=1000000; SYM=""; ESYM=""; PRE=0; WINDOW=50000000; OUT=""
+while getopts "o:s:t:S:E:P:W:" opt; do
+  case $opt in o) OUT=$OPTARG;; s) SKIP=$OPTARG;; t) COUNT=$OPTARG;; S) SYM=$OPTARG;; E) ESYM=$OPTARG;; P) PRE=$OPTARG;; W) WINDOW=$OPTARG;; *) exit 2;; esac
 done
 shift $((OPTIND - 1)); [[ ${1:-} == -- ]] && shift
-[[ -n $OUT && $# -gt 0 ]] || { sed -n '4,14p' "$0"; exit 2; }
+[[ -n $OUT && $# -gt 0 ]] || { sed -n '4,15p' "$0"; exit 2; }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/drtrace.XXXXXX"); trap 'rm -rf "$TMP"' EXIT
 if [[ -n $SYM ]]; then
@@ -30,6 +32,11 @@ if [[ -n $SYM ]]; then
 else
   # small slack: DynamoRIO's instruction counter and ours can differ slightly
   DROPTS=(-trace_after_instrs "$SKIP" -trace_for_instrs $((COUNT + COUNT / 10 + 1000))); CONV=(-s 0)
+fi
+if [[ -n $ESYM ]]; then
+  EPC=$(nm "$1" | awk -v s="$ESYM" '$3==s {print "0x"$1; exit}')
+  [[ -n $EPC ]] || { echo "symbol $ESYM not found in $1" >&2; exit 1; }
+  CONV+=(--stop-pc "$EPC")
 fi
 
 # setarch -R disables ASLR for this run only (no privileges needed) -> reproducible addresses

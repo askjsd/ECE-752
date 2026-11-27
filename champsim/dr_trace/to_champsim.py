@@ -119,9 +119,11 @@ def decode(pc, code):
 
 # ---- writer -------------------------------------------------------------------------------
 class Writer:
-    def __init__(self, out, skip, count, start_pc=None):
+    def __init__(self, out, skip, count, start_pc=None, stop_pc=None):
         self.out, self.skip, self.count = out, skip, count
         self.start_pc = start_pc               # if set, -s counts from the first execution of this PC
+        self.stop_pc = stop_pc                 # if set, stop (once started) at the first execution of this PC
+        self.stopped = False
         self.armed = start_pc is None
         self.seen = 0
         self.written = 0
@@ -133,7 +135,7 @@ class Writer:
         return armed and self.seen + 1 > self.skip
 
     def done(self):
-        return self.written >= self.count
+        return self.stopped or self.written >= self.count
 
     def push(self, pc, code_or_none, smem, dmem):
         """code_or_none is None while still inside the skip window (avoids decoding)."""
@@ -144,6 +146,9 @@ class Writer:
             if pc != self.start_pc:
                 return
             self.armed = True
+        if pc == self.stop_pc and self.seen > 0:
+            self.stopped = True
+            return
         self.seen += 1
         if self.seen <= self.skip or self.done():
             return
@@ -273,12 +278,15 @@ def main():
     ap.add_argument("--start-pc", type=lambda x: int(x, 0),
                     help="start counting -s/-t at the first execution of this address, e.g. "
                          "$(nm BIN | awk '$3==\"main\"{print \"0x\"$1}') (like the Pin tracer's -start_symbol)")
+    ap.add_argument("--stop-pc", type=lambda x: int(x, 0),
+                    help="end the trace at the first execution of this address after the start "
+                         "(e.g. the ROI-end function), even if fewer than -t instructions were written")
     ap.add_argument("-o", "--output", required=True)
     ap.add_argument("input", nargs="?", default="-")
     a = ap.parse_args()
     f = sys.stdin if a.input == "-" else open(a.input, errors="replace")
     with open(a.output, "wb") as out:
-        w = Writer(out, a.skip, a.count, a.start_pc)
+        w = Writer(out, a.skip, a.count, a.start_pc, a.stop_pc)
         if a.src == "drview":
             run_drview(f, w)
         else:
@@ -289,7 +297,7 @@ def main():
         print(f"warning: Capstone could not decode {BAD[0]} distinct instructions (written without registers)", file=sys.stderr)
     if not w.armed:
         print("warning: --start-pc was never executed", file=sys.stderr)
-    print(f"wrote {w.written} records", file=sys.stderr)
+    print(f"wrote {w.written} records" + (" (stopped at --stop-pc)" if w.stopped else ""), file=sys.stderr)
 
 if __name__ == "__main__":
     main()

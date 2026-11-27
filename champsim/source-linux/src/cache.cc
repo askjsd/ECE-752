@@ -584,9 +584,12 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.type = access_type::PREFETCH;
   pf_packet.pf_metadata = prefetch_metadata;
   pf_packet.cpu = cpu;
+  // Virtual-only mode, hard-wired (see identity_mapped() in ooo_cpu.cc): physical ==
+  // virtual, so every prefetch, including the L1I's virtual prefetches, is already
+  // translated and never goes through a TLB or the page walker. Keep it this way.
   pf_packet.address = pf_addr;
-  pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
-  pf_packet.is_translated = !virtual_prefetch;
+  pf_packet.v_address = pf_addr;
+  pf_packet.is_translated = true;
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;
