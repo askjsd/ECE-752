@@ -69,3 +69,6 @@ homeyogevchampsim-knobbed-build/
 *.lib
 *.pdb
 *.bak
+
+# Personal Claude Code instructions (never commit)
+CLAUDE.local.md
