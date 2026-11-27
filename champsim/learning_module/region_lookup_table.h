@@ -27,7 +27,7 @@ class RegionLookupTable
     RegionEntry &
     enter(RegionId region, L1iSettings hint = {})
     {
-        return entries_.try_emplace(region, RegionEntry{hint}).first->second;
+        return entries_.emplace(region, RegionEntry{hint}).first->second;
     }
 
   private:

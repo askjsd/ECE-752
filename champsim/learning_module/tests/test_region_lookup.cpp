@@ -1,6 +1,6 @@
 #include <cassert>
 
-#include "region_lookup_table.h"
+#include "../region_lookup_table.h"
 
 int
 main()
