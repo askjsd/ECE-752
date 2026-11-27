@@ -5,19 +5,22 @@
 #include <time.h>
 
 /* Random single-use "runs": slot -> run of `run` consecutive lines at a random place,
- * each slot used once per cycle through the region (reuse distance = region). */
-typedef struct { uint8_t *base; uint64_t slots; int bits; uint64_t key, ctr; long run; } runs_t;
+ * each slot used once per cycle through the region (reuse distance = region). Every
+ * cycle uses a different permutation (perm_epoch), so the order never repeats: a correlation
+ * (Markov) prefetcher cannot learn it from an earlier cycle. */
+typedef struct { uint8_t *base; uint64_t slots; int bits; uint64_t key, ctr, epoch; long run; } runs_t;
 static runs_t runs_make(long lines, long run, const char *name) {
     runs_t r;
     if (run < 1) die("run length must be >= 1");
     r.base = pfb_alloc((size_t)lines * G.line, name);
     r.run = run; r.slots = (uint64_t)(lines / run);
     if (r.slots < 2) die("%s: region too small for runs of %ld lines", name, run);
-    r.bits = log2_ceil(r.slots); r.key = G.seed * 0x9E3779B97F4A7C15ULL; r.ctr = 0;
+    r.bits = log2_ceil(r.slots); r.key = G.seed * 0x9E3779B97F4A7C15ULL; r.ctr = 0; r.epoch = 0;
     return r;
 }
 static inline const uint8_t *runs_next(runs_t *r) {
-    uint64_t s = perm_n(r->ctr++ % r->slots, r->slots, r->bits, r->key);
+    if (r->ctr == r->slots) { r->ctr = 0; r->epoch++; }   /* new order each cycle */
+    uint64_t s = perm_epoch(r->ctr++, r->slots, r->bits, r->key, r->epoch);
     return r->base + s * (uint64_t)r->run * G.line;
 }
 

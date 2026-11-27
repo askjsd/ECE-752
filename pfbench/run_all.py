@@ -48,6 +48,8 @@ SUITE = [
     ("stream_rev",          "stream_rev", [], None),
     *[(f"stream_holes_gap{g}", "stream_holes", [f"--gap={g}"], None) for g in (32, 128, 500)],
     ("stream_holes_gap128_spatial", "stream_holes", ["--run-lines=3", "--hole-lines=1"], None),
+    # same, full hierarchy: gap lines from L2, stream from DRAM, gap waits for the stream
+    *[(f"stream_holes_l2gap_g{g}", "stream_holes", ["--gap-level=l2", f"--gap={g}"], None) for g in (32, 128)],
     # pollution / bandwidth
     ("phase",               "phase", [], None),
     ("phase_isolated",      "phase", ["--rand-run-lines=1"], None),

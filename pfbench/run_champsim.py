@@ -16,8 +16,8 @@ Steps:
      pfb_roi_begin and stops at pfb_roi_end (capped by --trace-instructions). Traces
      are cached in <traces>/ and redone only when the command changes or with
      --force-trace.
-  2. Simulate (ChampSim). Every kernel uses the L1-only build except filllevel, which
-     needs the full hierarchy. The first --warmup-frac of the trace is warm-up (half
+  2. Simulate (ChampSim). Every kernel uses the L1-only build except filllevel and
+     stream_holes --gap-level=l2, which need the full hierarchy. The first --warmup-frac of the trace is warm-up (half
      for chase and jump, whose first traversal is what a Markov prefetcher learns
      from), and the rest is measured, so each trace is simulated exactly once.
      Each --hint NAME=HINT is one simulation per benchmark, with KNOBBED_HINT=HINT.
@@ -39,6 +39,11 @@ from run_all import SUITE  # noqa: E402
 # jump run two full traversals in the ROI; the first is for a Markov prefetcher to learn.
 WARMUP_FRAC = {"chase": 0.5, "jump": 0.5}
 FULL_HIERARCHY = {"filllevel"}
+
+
+def full_hierarchy(kernel, args):
+    """filllevel and stream_holes --gap-level=l2 need L2 and L3; everything else is L1-only."""
+    return kernel in FULL_HIERARCHY or "--gap-level=l2" in args
 
 
 def trace_one(name, kernel, args, which, a):
@@ -98,8 +103,8 @@ def roi_stats(text):
     return r
 
 
-def simulate_one(name, kernel, records, hint_name, hint, a):
-    full = kernel in FULL_HIERARCHY
+def simulate_one(name, kernel, args, records, hint_name, hint, a):
+    full = full_hierarchy(kernel, args)
     binary = a.full_bin if full else a.l1only_bin
     frac = WARMUP_FRAC.get(kernel, a.warmup_frac)
     warm = int(records * frac)
@@ -179,7 +184,7 @@ def main():
         if not os.environ.get("DR"):
             sys.exit("set DR (DynamoRIO tree), PY (python with capstone) and LD_LIBRARY_PATH; see README.md")
         needed = [a.bin, a.bin_noswpf] + ([] if a.trace_only else [a.l1only_bin] +
-                  ([a.full_bin] if any(s[1] in FULL_HIERARCHY for s in suite) else []))
+                  ([a.full_bin] if any(full_hierarchy(s[1], s[2]) for s in suite) else []))
         for b in needed:
             if not os.path.exists(b):
                 sys.exit(f"{b} not found (run make here, or build ChampSim with champsim/build_knobbed.sh)")
@@ -194,7 +199,8 @@ def main():
             sys.exit(f"{len(tfail)} trace(s) failed: {', '.join(tfail)}")
         return
 
-    tasks = [(simulate_one, (n, k, records[n], hn, h, a)) for n, k, _, _ in suite if n in records for hn, h in hints]
+    tasks = [(simulate_one, (n, k, args, records[n], hn, h, a))
+             for n, k, args, _ in suite if n in records for hn, h in hints]
     print(f"simulating {len(tasks)} runs ({len(records)} traces x {len(hints)} hints), {a.jobs} at a time", flush=True)
     rows, sfail = run_pool(a.jobs, tasks, "sim")
     rows = [r for r in rows if r]
