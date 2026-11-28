@@ -23,8 +23,11 @@ are outside the confidence and destination limits.
 The data cap counts requests generated per target instruction. The fill cutoff
 uses the percentage of occupied slots for outstanding misses. An eligible
 request can fill L1D below the cutoff. A cutoff of 0 sends all requests to L2.
-Requests selected for L2 by the original data policy still go to L2. A new cap
-applies when generating requests. A new fill cutoff applies when sending them.
+Requests selected for L2 by the original data policy still go to L2. EDP's
+built-in confidence rules still decide which predictions qualify for L1 or
+L2. The exposed fill cutoff controls how cache load affects that decision.
+A new cap applies when generating requests. A new fill cutoff applies when
+sending them.
 Turning EDP off also clears requests it has queued internally. Already-sent
 requests can still finish. Both prefetchers keep learning while disabled.
 
@@ -64,8 +67,9 @@ EDP_ENABLED=1 EIP_ENABLED=0 EDP_MAX_REQUESTS_PER_TARGET=1 \
 Use the same executable and trace when comparing settings. The one-core runs
 used a synthetic instruction trace, a saved stencil window, a synthetic data
 trace, and a short window of the public DPC-4 `607.cactuBSSN_s-4248B` trace.
-The run logs and CSV are under `champsim/results/entangling-integration/` in
-the local worktree. These are short integration checks.
+The [settings results](validation/entangling/comparisons.csv) and the
+[comparison with Celeste's prefetcher](validation/entangling/instruction-comparison.csv)
+are checked in. These are short integration checks.
 
 - The defaults matched the original instruction port on both instruction tests.
   On the synthetic instruction trace, Entangling took 302,230 cycles and
@@ -84,7 +88,8 @@ the local worktree. These are short integration checks.
 ## Source and port scope
 
 - Instruction baseline: [Ros and Jimborean’s ISCA 2021 source](https://github.com/alberto-ros/EntanglingInstructionPrefetcher/tree/75c77536ac4b1fa1a801587df444ee1501f1b3aa/ISCA-21).
-  The team port is based on the version already tested on `Kewei`.
+  The [original Kewei snapshot](https://github.com/askjsd/ECE-752/tree/3fbf1698d2cfd73b165750d62c81ba70a770dc31)
+  preserves the earlier Windows-only setup and reference files.
 - Data baseline: [Navarro-Torres, Singh, Panda, and Ros’s DPC-4 submission](https://github.com/CMU-SAFARI/DPC4/tree/051684493c8439312b9c4c3af38fa25100834afa/submissions/EDP).
   The port uses the authors’ L1D module and the team’s existing cache interface.
   It keeps the original request-generation logic and uses the team’s L2 and
