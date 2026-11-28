@@ -211,7 +211,6 @@ public:
 
   long invalidate_entry(champsim::address inval_addr);
   bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
-  [[nodiscard]] bool has_pending_request(champsim::address module_addr) const;
 
   [[deprecated]] bool prefetch_line(uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
 

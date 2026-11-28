@@ -19,7 +19,6 @@
 
 #include <cstring>
 #include <deque>
-#include <fstream>
 #include <memory>
 #include <numeric>
 #include <string>
@@ -92,15 +91,7 @@ class bulk_tracereader
 public:
   ooo_model_instr operator()();
 
-  bulk_tracereader(uint8_t cpu_idx, std::string tf)
-      : cpu(cpu_idx), trace_file([&tf] {
-          if constexpr (std::is_same_v<F, std::ifstream>)
-            return F{tf, std::ios::in | std::ios::binary};
-          else
-            return F{tf};
-        }())
-  {
-  }
+  bulk_tracereader(uint8_t cpu_idx, std::string tf) : cpu(cpu_idx), trace_file(tf) {}
   bulk_tracereader(uint8_t cpu_idx, F&& file) : cpu(cpu_idx), trace_file(std::move(file)) {}
 
   [[nodiscard]] bool eof() const { return trace_file.eof() && std::size(instr_buffer) <= refresh_thresh; }
