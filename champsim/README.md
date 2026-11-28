@@ -3,6 +3,12 @@
 This is a separate x86 trace-driven version of FlagBench. It does not reuse
 gem5 outputs or the RISC-V binaries.
 
+## Entangling prefetchers
+
+The combined Entangling configuration runs the instruction and data
+prefetchers together. The [Entangling guide](ENTANGLING_KNOBS.md) lists the
+runtime controls, build command, and short comparison results.
+
 ## Datapath mapping
 
 The ChampSim configuration in `champsim_config.json` approximates the current
