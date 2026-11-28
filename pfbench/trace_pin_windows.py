@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""Generate ChampSim PIN traces for all 56 pfbench configurations on native Windows.
+"""Generate ChampSim PIN traces for every pfbench configuration on native Windows.
 
 Usage (PowerShell, from repo root):
   python pfbench\\trace_pin_windows.py
   python pfbench\\trace_pin_windows.py --only gather,jump
-  python pfbench\\trace_pin_windows.py --skip-instructions 100000 --trace-instructions 2000000
   python pfbench\\trace_pin_windows.py --jobs 8     # trace 8 benchmarks at a time
+
+Each trace covers exactly the measured region (ROI): the PIN tracer starts at
+pfb_roi_begin and stops at pfb_roi_end (-start_symbol / -stop_symbol), like
+trace_dr.sh -S/-E on Linux. --trace-instructions is only a cap. Earlier versions
+started a fixed 100K instructions into the program, which recorded mostly setup code
+(allocation, filling memory, building lists): setup runs 0.25M-12M instructions.
+pfbench.exe exports the two ROI functions so PIN can find them without debug info.
+
+A trace is reused only if it was made by the same command from a pfbench.exe that
+has not changed since; otherwise (for example, traces from the old fixed-offset
+version) it is made again. pfbench.exe is rebuilt when a source file is newer.
 
 Traces are independent, so they run in parallel (--jobs). Native timing runs are
 not done here; those belong in run_all.py and must stay sequential.
 """
 
 import argparse
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import shutil
@@ -66,6 +77,9 @@ def find_pin(explicit):
     )
 
 
+HDRS = ["pfb.h"]
+
+
 def build_pfbench(rebuild):
     clang = shutil.which("clang") or r"C:\Program Files\LLVM\bin\clang.exe"
     cflags = [
@@ -83,7 +97,8 @@ def build_pfbench(rebuild):
         ("pfbench_noswpf.exe", ["-DPFB_NO_SWPF"]),
     ):
         out = HERE / name
-        if out.is_file() and not rebuild:
+        newest_src = max((HERE / f).stat().st_mtime for f in SRC + HDRS)
+        if out.is_file() and not rebuild and out.stat().st_mtime >= newest_src:
             continue
         print(f"Building {out} ...", flush=True)
         subprocess.run(
@@ -116,16 +131,10 @@ def main():
         help="Comma-separated benchmark names or kernel names",
     )
     ap.add_argument(
-        "--skip-instructions",
-        type=int,
-        default=100_000,
-        help="PIN -s instructions to skip (default: 100000)",
-    )
-    ap.add_argument(
         "--trace-instructions",
         type=int,
-        default=2_000_000,
-        help="PIN -t instructions to trace (default: 2000000)",
+        default=5_000_000,
+        help="cap on trace length; traces normally end at pfb_roi_end first (default: 5000000)",
     )
     ap.add_argument(
         "--rebuild",
@@ -161,13 +170,7 @@ def main():
     jobs = []
     for name, kernel, kargs, which in suite:
         trace_path = out_dir / f"{name}.champsimtrace"
-        if (
-            trace_path.is_file()
-            and trace_path.stat().st_size > 0
-            and not args.force
-        ):
-            print(f"Reusing {trace_path.name}")
-            continue
+        meta_path = out_dir / f"{name}.champsimtrace.json"
         exe = HERE / (
             "pfbench_noswpf.exe" if which == "noswpf" else "pfbench.exe"
         )
@@ -177,27 +180,48 @@ def main():
             str(TRACER),
             "-o",
             str(trace_path),
-            "-s",
-            str(args.skip_instructions),
+            "-start_symbol",
+            "pfb_roi_begin",
+            "-stop_symbol",
+            "pfb_roi_end",
             "-t",
             str(args.trace_instructions),
             "--",
             str(exe),
             kernel,
             *kargs,
+            "--quiet=1",
         ]
-        jobs.append((name, cmd, out_dir / f"{name}.trace.log"))
+        if not args.force and trace_path.is_file() and meta_path.is_file():
+            meta = json.loads(meta_path.read_text())
+            if (
+                meta.get("cmd") == cmd
+                and trace_path.stat().st_size > 0
+                and trace_path.stat().st_mtime >= exe.stat().st_mtime
+            ):
+                print(f"Reusing {trace_path.name} ({meta.get('records')} instructions)")
+                continue
+        jobs.append((name, cmd, trace_path, meta_path, out_dir / f"{name}.trace.log"))
 
     def run(job):
-        name, cmd, log = job
+        name, cmd, trace, meta_path, log = job
+        for stale in (trace, meta_path):
+            if stale.exists():
+                stale.unlink()
         with open(log, "w") as f:
             rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
-        if rc:
-            trace = Path(cmd[cmd.index("-o") + 1])
+        text = log.read_text(errors="replace")
+        ok = rc == 0 and "Found start symbol" in text and trace.is_file() and trace.stat().st_size > 0
+        if not ok:
             if trace.exists():
-                trace.unlink()  # never reuse a partial trace
-            raise RuntimeError(f"exit {rc}, see {log}")
-        return name
+                trace.unlink()  # never reuse a partial or wrong trace
+            why = "start symbol pfb_roi_begin not found" if "Found start symbol" not in text else f"exit {rc}"
+            raise RuntimeError(f"{why}, see {log}")
+        records = trace.stat().st_size // 64  # one ChampSim instruction record = 64 bytes
+        capped = "Stopped tracing" not in text
+        meta_path.write_text(json.dumps({"cmd": cmd, "records": records, "capped": capped}))
+        note = f"; ROI longer than --trace-instructions, trace holds its first {records}" if capped else ""
+        return f"{name} ({records} instructions{note})"
 
     failed = []
     print(f"Tracing {len(jobs)} benchmarks, {args.jobs} at a time", flush=True)
@@ -205,8 +229,7 @@ def main():
         futs = {ex.submit(run, job): job[0] for job in jobs}
         for i, fut in enumerate(as_completed(futs), 1):
             try:
-                fut.result()
-                print(f"[{i}/{len(jobs)}] Traced {futs[fut]}", flush=True)
+                print(f"[{i}/{len(jobs)}] Traced {fut.result()}", flush=True)
             except Exception as e:
                 failed.append(futs[fut])
                 print(f"[{i}/{len(jobs)}] FAILED {futs[fut]}: {e}", flush=True)

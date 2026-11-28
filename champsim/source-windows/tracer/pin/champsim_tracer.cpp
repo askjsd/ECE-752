@@ -207,10 +207,12 @@ VOID ImageLoad(IMG img, VOID* v)
 
   // Look for stop symbol
   if (!KnobStopSymbol.Value().empty() && !foundStopSymbol.load()) {
-    foundStopSymbol.store(true);
     RTN rtn = RTN_FindByName(img, KnobStopSymbol.Value().c_str());
 
     if (RTN_Valid(rtn)) {
+      // Mark it found only once it is: marking it before the lookup stopped the search
+      // after the first image and hid the "not found" error below.
+      foundStopSymbol.store(true);
       RTN_Open(rtn);
       // Insert call at function entry (or use IPOINT_AFTER for function exit)
       RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)StopTracing, IARG_INST_PTR, IARG_END);

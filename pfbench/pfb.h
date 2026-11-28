@@ -109,8 +109,16 @@ int swpf_available(void);
  * the symbol, e.g.  trace_dr.sh -S pfb_roi_begin ... . Inside: m5 work markers when
  * built with -DPFB_M5, wall-clock time, and Linux perf counters when permitted.
  * pfb_roi_end prints one machine-readable "RESULT key=value ..." line. */
-void pfb_roi_begin(void);
-void pfb_roi_end(uint64_t accesses, uint64_t checksum);
+/* On Windows the two ROI functions are exported from the .exe, so their names are in
+ * its export table: Intel PIN's tracer (-start_symbol / -stop_symbol) finds them even in
+ * a build without debug info. No effect elsewhere. */
+#ifdef _WIN32
+#define PFB_EXPORT __declspec(dllexport)
+#else
+#define PFB_EXPORT
+#endif
+PFB_EXPORT void pfb_roi_begin(void);
+PFB_EXPORT void pfb_roi_end(uint64_t accesses, uint64_t checksum);
 extern volatile uint64_t pfb_sink;
 
 /* "key=value" pairs appended to the RESULT line (kernel parameters). */

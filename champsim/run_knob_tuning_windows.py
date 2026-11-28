@@ -661,7 +661,12 @@ def main():
             "--seeds",
             args.seeds,
             "--warmup",
-            args.warmup_instructions,
+            # chase and jump run two traversals; the first is what a Markov prefetcher
+            # learns from, so warm up on half the trace (knob_carbs keeps this ratio
+            # when it scales both down to fit), as run_champsim.py does on Linux
+            args.sim_instructions
+            if kernel.startswith(("chase", "jump"))
+            else args.warmup_instructions,
             "--sim",
             args.sim_instructions,
             "--jobs",

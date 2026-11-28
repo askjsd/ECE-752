@@ -206,9 +206,11 @@ logical CPUs; each uses about 2 cores) and then `-j` simulations at a time
    accuracy, coverage and timeliness, one row per benchmark and hint.
 
 **Windows: `trace_pin_windows.py`** builds `pfbench.exe` with clang and traces
-the same 58 configurations with Intel PIN, `--jobs` at a time. Its traces start
-a fixed `--skip-instructions` after process start, not at `pfb_roi_begin`, so
-they include setup code (see Status).
+the same 58 configurations with Intel PIN, `--jobs` at a time. Like the Linux
+traces, each covers exactly the ROI: PIN's tracer starts at `pfb_roi_begin` and
+stops at `pfb_roi_end` (`-start_symbol`/`-stop_symbol`; `pfbench.exe` exports both
+functions so PIN finds them without debug info). Old traces, and traces made from an
+older `pfbench.exe`, are made again automatically. Not yet run on Windows.
 
 ## Status
 
@@ -256,10 +258,11 @@ they include setup code (see Status).
 - Checking the ChampSim results in detail. `run_champsim.py` has run the whole
   suite (56 traces, 2 hints: tracing 569 s with 12 traces at a time, simulation
   65 s), but only the summary numbers have been looked at.
-- Windows traces start at a fixed instruction count, not at `pfb_roi_begin`. Setup
-  takes 0.25M–12M instructions, so with the default `-s 100000 -t 2000000` most
-  traces are mostly setup and the `gather2_*` and `fill_*` traces miss the ROI
-  entirely. The PIN tracer needs a start-at-symbol option.
+- Running the Windows tracer on Windows. It used to start a fixed 100K instructions
+  into the program, so its traces were mostly setup code (setup runs 0.25M-12M
+  instructions) and knob tuning on them matched the default on 51 of 56. It now
+  starts at `pfb_roi_begin`; this has been tested on Linux with a stub `pin.exe`
+  only.
 - Non-blocking software prefetches in ChampSim (see the caveat above).
 
 **Caveats**
