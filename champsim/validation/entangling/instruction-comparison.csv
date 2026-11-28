@@ -1,0 +1,7 @@
+trace,variant,instructions,cycles,L1I_issued,L1I_useful
+instruction,celeste,400000,389352,49994,12499
+instruction,original,400000,302230,24953,24951
+instruction,entangling,400000,302230,24953,24951
+stencil,celeste,200003,97840,24441,284
+stencil,original,200003,99610,539,477
+stencil,entangling,200003,99610,539,477
