@@ -379,10 +379,17 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
 bool CACHE::has_pending_request(champsim::address module_addr) const
 {
   auto matches = [this, module_addr](const auto& entry) {
-    return champsim::block_number{virtual_prefetch ? entry.v_address : entry.address} == champsim::block_number{module_addr};
+    const auto addr = virtual_prefetch ? entry.v_address : entry.address;
+    return champsim::block_number{addr} == champsim::block_number{module_addr};
   };
-  auto contains = [&matches](const auto& queue) { return std::any_of(queue.begin(), queue.end(), matches); };
-  return contains(internal_PQ) || contains(inflight_tag_check) || contains(translation_stash) || contains(MSHR) || contains(inflight_fills);
+  auto contains = [&matches](const auto& queue) {
+    return std::any_of(queue.begin(), queue.end(), matches);
+  };
+  const bool queued = contains(internal_PQ) || contains(inflight_tag_check);
+  if (queued || contains(translation_stash)) {
+    return true;
+  }
+  return contains(MSHR) || contains(inflight_fills);
 }
 
 bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
