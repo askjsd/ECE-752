@@ -220,7 +220,7 @@ class DeltaEntry
     };
 
     DeltaEntry() = default;
-    DeltaEntry(uint64_t _tag) : tag(_tag) {};
+    DeltaEntry(uint64_t _tag) : tag(_tag) {}
 };
 
 std::array<Cache_Berti<DeltaEntry, deltaTableSets, deltaTableWays>, max_cores>
@@ -237,7 +237,7 @@ class LastAddrEntry
     uint64_t set = 0;
     uint64_t way = 0;
     LastAddrEntry() = default;
-    LastAddrEntry(uint64_t _tag) : tag(_tag) {};
+    LastAddrEntry(uint64_t _tag) : tag(_tag) {}
 };
 // Last addr table (L@T)
 std::array<Cache_Berti<LastAddrEntry, lastAddrSet, lastAddrWay>, max_cores>
@@ -250,7 +250,7 @@ class EntanglingEntry
     std::array<std::optional<std::pair<uint64_t, uint64_t>>, entanglingSize>
         entries;
     EntanglingEntry() = default;
-    EntanglingEntry(uint64_t _tag) : tag(_tag) {};
+    EntanglingEntry(uint64_t _tag) : tag(_tag) {}
 };
 
 std::array<
