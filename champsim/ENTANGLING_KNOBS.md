@@ -64,6 +64,19 @@ EDP_ENABLED=1 EIP_ENABLED=0 EDP_MAX_REQUESTS_PER_TARGET=1 \
   --warmup-instructions 100000 --simulation-instructions 500000 trace.champsimtrace.xz
 ```
 
+To check the controls on a completed Linux build, run this from the repository
+root. The test generates its own instruction and data accesses.
+
+```bash
+bash champsim/tests/run_entangling_tests.sh ~/champsim-knobbed-linux
+```
+
+The test reads the defaults, switches each prefetcher off and back on during
+one simulation, checks how many requests each one sends, and verifies that
+the L2-only setting sends no data prefetch fills into L1. It also checks the
+numeric limits and restores the original settings. It uses the same
+functions a learner can call on the simulation thread.
+
 Use the same executable and trace when comparing settings. The one-core runs
 used a synthetic instruction trace, a saved stencil window, a synthetic data
 trace, and a short window of the public DPC-4 `607.cactuBSSN_s-4248B` trace.

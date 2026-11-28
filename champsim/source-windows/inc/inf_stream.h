@@ -19,9 +19,9 @@
 
 #include <bzlib.h>
 #include <cassert>
+#include <fstream>
 #include <iostream>
 #include <lzma.h>
-#include <fstream>
 #include <memory>
 #include <zlib.h>
 
