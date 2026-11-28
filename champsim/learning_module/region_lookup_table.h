@@ -14,9 +14,25 @@ struct L1iSettings
     int distance = 1;
 };
 
+struct InstructionPrefetcherSettings
+{
+    bool enabled = true;
+    int confidence_threshold = 1;
+    int destination_cap = 6;
+};
+
+struct DataPrefetcherSettings
+{
+    bool enabled = true;
+    int max_requests_per_target = 16;
+    int l1_fill_threshold_percent = 50;
+};
+
 struct RegionEntry
 {
     L1iSettings l1i;
+    InstructionPrefetcherSettings instruction = {};
+    DataPrefetcherSettings data = {};
 };
 
 class RegionLookupTable
@@ -27,7 +43,13 @@ class RegionLookupTable
     RegionEntry &
     enter(RegionId region, L1iSettings hint = {})
     {
-        return entries_.emplace(region, RegionEntry{hint}).first->second;
+        return enter_region(region, RegionEntry{hint});
+    }
+
+    RegionEntry &
+    enter_region(RegionId region, RegionEntry initial = {})
+    {
+        return entries_.emplace(region, initial).first->second;
     }
 
   private:
