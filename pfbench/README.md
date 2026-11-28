@@ -87,7 +87,7 @@ mostly by L2, not DRAM.
 | `stride_zigzag` | +fwd, −back, ... lines | `--fwd-lines --back-lines` |
 | `bursts` | short strided bursts, then random single-use jumps, from one load PC | `--burst-lines --burst-stride-lines --jumps` |
 | `stream` / `stream_rev` | forward / backward sequential stream | `--step-bytes --region-lines` |
-| `stream_holes` | stream line, then `gap` unique random lines (too-early prefetch test) | `--gap --stream-accesses --gap-lines`, spatial: `--hole-lines --run-lines --random-holes` |
+| `stream_holes` | stream line, then `gap` unique random lines (too-early prefetch test). `--gap-level=mem` (default, L1-only): every gap line misses to memory. `--gap-level=l2` (full hierarchy): the gap region fits in L2 (L2/2 lines), the stream comes from DRAM (4x L3) and each step's gap addresses depend on its stream load (`--dep=1`), so a late or missing stream prefetch stalls the core and shows in IPC | `--gap-level --gap --stream-accesses --gap-lines --region-lines --dep`, spatial: `--hole-lines --run-lines --random-holes` |
 | `phase` | random (bait runs) ↔ stream phases | `--phase-accesses --phases --rand-run-lines` |
 | `pollute` | hot set in L1 plus single-use cold runs | `--hot-lines --cold-every --cold-run-lines` |
 | `late` | one load per line, minimal compute | `--work --step-bytes` |
@@ -180,7 +180,7 @@ blocking prefetches stalls retirement. A planned fix is to tag prefetch records 
 
 **Native: `run_all.py`, one run at a time on purpose.** Benchmarks running together
 would share L3, memory bandwidth and the memory controller, so their timings would
-measure each other. It runs 56 configurations (the kernel defaults plus sweeps of
+measure each other. It runs 58 configurations (the kernel defaults plus sweeps of
 software-prefetch distance, step size k and locality, burst length,
 `stream_holes --gap`, `late --work`, pollution-run length and fill-level ablations),
 writes `results/results.csv` with one column per RESULT key, keeps every log in
@@ -191,13 +191,14 @@ about 0.15 s.
 **ChampSim: `run_champsim.py`, in parallel.** Tracing and simulation are
 deterministic and independent, so it runs `--trace-jobs` traces (default half the
 logical CPUs; each uses about 2 cores) and then `-j` simulations at a time
-(default all CPUs). For the same 56 configurations it:
+(default all CPUs). For the same 58 configurations it:
 
 1. traces each ROI with DynamoRIO into `traces/` (cached: redone only when the
    command or the pfbench binary changes, or with `--force-trace`);
 2. simulates each trace once per `--hint NAME=HINT` (default `off=source=off` and
    `default=`, the knobbed module's built-in hint). The L1-only build is used for
-   everything except `filllevel`, which uses the full hierarchy. The first 20% of
+   everything except `filllevel` and `stream_holes --gap-level=l2`, which use the full
+   hierarchy. The first 20% of
    each trace is warm-up (`--warmup-frac`), or half for `chase` and `jump`, whose
    first traversal is what a Markov prefetcher learns from;
 3. writes `results/champsim/results.csv`: IPC, cycles, per-level load
@@ -205,9 +206,11 @@ logical CPUs; each uses about 2 cores) and then `-j` simulations at a time
    accuracy, coverage and timeliness, one row per benchmark and hint.
 
 **Windows: `trace_pin_windows.py`** builds `pfbench.exe` with clang and traces
-the same 56 configurations with Intel PIN, `--jobs` at a time. Its traces start
-a fixed `--skip-instructions` after process start, not at `pfb_roi_begin`, so
-they include setup code (see Status).
+the same 58 configurations with Intel PIN, `--jobs` at a time. Like the Linux
+traces, each covers exactly the ROI: PIN's tracer starts at `pfb_roi_begin` and
+stops at `pfb_roi_end` (`-start_symbol`/`-stop_symbol`; `pfbench.exe` exports both
+functions so PIN finds them without debug info). Old traces, and traces made from an
+older `pfbench.exe`, are made again automatically. Not yet run on Windows.
 
 ## Status
 
@@ -230,15 +233,36 @@ they include setup code (see Status).
   page limit, 0.370 with virtual-only mode hard-wired. IPC no longer falls as the
   distance grows.
 
+- Knob tuning (CARBS, random search, hill climbing; `champsim/knob_carbs.py`, v3
+  encoding, 2 seeds x 20 evaluations) on all 56 ROI traces: 2,696 s with 4 traces at
+  a time. Geometric-mean speedup over prefetch off: module default 1.055, CARBS
+  1.370, random 1.330, hill climbing 1.297, best found 1.442. Markov gives 5.1-5.4x
+  on `chase` and `jump`.
+- Single-use random accesses really are single-use: `phase`, `pollute` and
+  `stream_holes` used to repeat the same "random" order every time they cycled
+  through their region, so a Markov prefetcher learned it (1.4-2.1x). They now use
+  a different permutation each cycle (`perm_epoch` in `pfb.h`); Markov gains on
+  them fell to 1.00-1.11x.
+
+- `stream_holes --gap-level=l2` (full hierarchy, `--dep=1`): prefetching gains
+  1.51x at gap 32 and 1.13x at gap 128 in IPC. At gap 128 (safe distance about 3),
+  timely prefetches fall from 1,619 at distance 1 to 0 at distance 8, and the
+  throttle settles at level 0 by itself. A too-early prefetch costs only about 1%
+  IPC here, because the evicted line is still in L2; the timeliness counters show
+  it clearly. The gap order now comes from a full-period LCG (a few instructions
+  per access instead of about 70), which also makes the L1-only variants
+  memory-bound rather than compute-bound.
+
 **Not yet done**
 
 - Checking the ChampSim results in detail. `run_champsim.py` has run the whole
   suite (56 traces, 2 hints: tracing 569 s with 12 traces at a time, simulation
   65 s), but only the summary numbers have been looked at.
-- Windows traces start at a fixed instruction count, not at `pfb_roi_begin`. Setup
-  takes 0.25M–12M instructions, so with the default `-s 100000 -t 2000000` most
-  traces are mostly setup and the `gather2_*` and `fill_*` traces miss the ROI
-  entirely. The PIN tracer needs a start-at-symbol option.
+- Running the Windows tracer on Windows. It used to start a fixed 100K instructions
+  into the program, so its traces were mostly setup code (setup runs 0.25M-12M
+  instructions) and knob tuning on them matched the default on 51 of 56. It now
+  starts at `pfb_roi_begin`; this has been tested on Linux with a stub `pin.exe`
+  only.
 - Non-blocking software prefetches in ChampSim (see the caveat above).
 
 **Caveats**

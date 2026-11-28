@@ -64,6 +64,16 @@ static inline uint64_t perm_n(uint64_t i, uint64_t n, int bits, uint64_t key) {
     do { x = perm_bits(x, bits, key); } while (x >= n);
     return x;
 }
+/* Position i of cycle `epoch` through a single-use region of n lines. Cycle 0 is
+ * perm_n(i); every later cycle passes it through a second permutation keyed by the
+ * epoch, so the order (and so every "next line" link) differs from cycle to cycle.
+ * A repeated order is learnable by a correlation (Markov) prefetcher, which would
+ * defeat a single-use test. (Changing perm_n's key alone is not enough: the key is
+ * added to the index before mixing, so it only rotates the same cycle.) */
+static inline uint64_t perm_epoch(uint64_t i, uint64_t n, int bits, uint64_t key, uint64_t epoch) {
+    uint64_t x = perm_n(i, n, bits, key);
+    return epoch ? perm_n(x, n, bits, key ^ (epoch * 0xD1B54A32D192ED03ULL)) : x;
+}
 
 /* ---- memory ------------------------------------------------------------------------ */
 /* 2 MiB-aligned, pre-touched (no first-touch faults inside the ROI). Prints a REGION line
@@ -99,8 +109,16 @@ int swpf_available(void);
  * the symbol, e.g.  trace_dr.sh -S pfb_roi_begin ... . Inside: m5 work markers when
  * built with -DPFB_M5, wall-clock time, and Linux perf counters when permitted.
  * pfb_roi_end prints one machine-readable "RESULT key=value ..." line. */
-void pfb_roi_begin(void);
-void pfb_roi_end(uint64_t accesses, uint64_t checksum);
+/* On Windows the two ROI functions are exported from the .exe, so their names are in
+ * its export table: Intel PIN's tracer (-start_symbol / -stop_symbol) finds them even in
+ * a build without debug info. No effect elsewhere. */
+#ifdef _WIN32
+#define PFB_EXPORT __declspec(dllexport)
+#else
+#define PFB_EXPORT
+#endif
+PFB_EXPORT void pfb_roi_begin(void);
+PFB_EXPORT void pfb_roi_end(uint64_t accesses, uint64_t checksum);
 extern volatile uint64_t pfb_sink;
 
 /* "key=value" pairs appended to the RESULT line (kernel parameters). */

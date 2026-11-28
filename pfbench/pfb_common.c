@@ -203,7 +203,7 @@ static struct timespec g_t0;
 #endif
 static int g_roi_state;
 
-__attribute__((noinline, used)) void pfb_roi_begin(void) {
+PFB_EXPORT __attribute__((noinline, used)) void pfb_roi_begin(void) {
     if (g_roi_state++) die("pfb_roi_begin called twice");
     if (g_perf_msg[0]) info("%s", g_perf_msg);
     fflush(NULL);
@@ -223,7 +223,7 @@ __attribute__((noinline, used)) void pfb_roi_begin(void) {
     __asm__ volatile("" ::: "memory");
 }
 
-__attribute__((noinline, used)) void pfb_roi_end(uint64_t accesses, uint64_t checksum) {
+PFB_EXPORT __attribute__((noinline, used)) void pfb_roi_end(uint64_t accesses, uint64_t checksum) {
     __asm__ volatile("" ::: "memory");
 #ifdef _WIN32
     LARGE_INTEGER t1_qpc;
