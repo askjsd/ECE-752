@@ -64,6 +64,16 @@ static inline uint64_t perm_n(uint64_t i, uint64_t n, int bits, uint64_t key) {
     do { x = perm_bits(x, bits, key); } while (x >= n);
     return x;
 }
+/* Position i of cycle `epoch` through a single-use region of n lines. Cycle 0 is
+ * perm_n(i); every later cycle passes it through a second permutation keyed by the
+ * epoch, so the order (and so every "next line" link) differs from cycle to cycle.
+ * A repeated order is learnable by a correlation (Markov) prefetcher, which would
+ * defeat a single-use test. (Changing perm_n's key alone is not enough: the key is
+ * added to the index before mixing, so it only rotates the same cycle.) */
+static inline uint64_t perm_epoch(uint64_t i, uint64_t n, int bits, uint64_t key, uint64_t epoch) {
+    uint64_t x = perm_n(i, n, bits, key);
+    return epoch ? perm_n(x, n, bits, key ^ (epoch * 0xD1B54A32D192ED03ULL)) : x;
+}
 
 /* ---- memory ------------------------------------------------------------------------ */
 /* 2 MiB-aligned, pre-touched (no first-touch faults inside the ROI). Prints a REGION line

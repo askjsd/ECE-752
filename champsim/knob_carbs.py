@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
 """Run the existing flagbench tuners (CARBS, random search, hill climbing) over the
-knobbed prefetcher's knobs instead of compiler flags.   (v2 knob space; the first
-version is kept as knob_carbs_v1.py because its results are still on disk.)
+knobbed prefetcher's knobs instead of compiler flags.   (v3 knob space; earlier versions
+are kept as knob_carbs_v1.py and knob_carbs_v2.py because their results are still on disk.)
 
 The tuners in flagbench/tuners.py search a space of N on/off "flags" and only need an
 object with .n, .o3, .evaluate(config_id), .bits(config_id) and .to_id(bits). Here a
-config id is a 12-bit pattern that is decoded into a KNOBBED_HINT string plus the
+config id is a 13-bit pattern that is decoded into a KNOBBED_HINT string plus the
 KNOBBED_INSERT setting, and evaluate() runs champsim_knobbed on one trace and returns
 cycles (lower is better).
 
-Bit layout (least significant bit first). Every field uses ALL of its codes, so no
-setting is an alias of another. Ordered fields use Gray code so that neighbouring
-values differ by one bit.
+Bit layout (least significant bit first). Ordered fields use Gray code so that
+neighbouring values differ by one bit.
 
-  bits 0-1   source    0 off, 1 nextline, 2 stride, 3 markov
-  bit  2     trigger   0 tagged, 1 access
-  bits 3-5   level     aggressiveness ladder 0-7 (Gray coded); see knobbed.cc for rungs
-  bits 6-7   fill      0 always L1D, 1 gated low, 2 gated high, 3 always L2 (Gray coded)
-  bit  8     throttle  0 off, 1 on (can only step the level down, never above `level`)
-  bit  9     confirm   0 -> 1, 1 -> 2   (stride and markov only)
-  bit  10    fallback  0 off, 1 next-line fallback when the engine has nothing to issue
-  bit  11    insert    0 prefetch fills MRU, 1 prefetch fills LRU (lru_pf replacement)
+  bits 0-2   source    one bit per engine: bit 0 nextline, bit 1 stride, bit 2 markov.
+                       The highest set bit wins (markov > stride > nextline); none set
+                       is off. Every engine is one bit flip away from any setting. (v2
+                       packed source into 2 bits, so markov needed BOTH bits on: CARBS,
+                       which learns each bit separately, never found it.)
+  bit  3     trigger   0 tagged, 1 access
+  bits 4-6   level     aggressiveness ladder 0-7 (Gray coded); see knobbed.cc for rungs
+  bits 7-8   fill      0 always L1D, 1 gated low, 2 gated high, 3 always L2 (Gray coded)
+  bit  9     throttle  0 off, 1 on (can only step the level down, never above `level`)
+  bit  10    confirm   0 -> 1, 1 -> 2   (stride and markov only)
+  bit  11    fallback  0 off, 1 next-line fallback when the engine has nothing to issue
+  bit  12    insert    0 prefetch fills MRU, 1 prefetch fills LRU (lru_pf replacement)
 
-canonical(cid) zeroes fields that cannot affect the result (everything when the
-source is off; confirm and fallback for next-line), so equivalent configs share one
-simulation and the distinct-config count is exact.
+canonical(cid) maps every config to one representative of the configs that simulate
+identically: the source bits become one-hot, and fields that cannot affect the result
+are zeroed (everything when the source is off; confirm and fallback for next-line).
+Equivalent configs share one simulation, and the distinct-config count (2,305, as in
+v2) is exact.
 
 Parallelism: --jobs simulations run at once. The exhaustive sweep uses all of them,
 and the tuner runs (3 tuners x --seeds) run side by side, each one still sequential
@@ -61,7 +66,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # repo root, for flagbench.tuners
 from flagbench import tuners  # noqa: E402
 
-N_BITS = 12
+N_BITS = 13
+ENCODING = "v3"
 SOURCE = ["off", "nextline", "stride", "markov"]
 TRIGGER = ["tagged", "access"]
 FILL = ["l1d", "low", "high", "l2"]
@@ -79,20 +85,27 @@ def ungray(g):
     return n
 
 
+def source_of(bits3):
+    """3 source bits -> source index (0 off, 1 nextline, 2 stride, 3 markov): highest set bit wins."""
+    return 3 if bits3 & 4 else 2 if bits3 & 2 else 1 if bits3 & 1 else 0
+
+
 def fields(cid):
     """config id -> dict of decoded field values."""
     f = lambda lo, n: (cid >> lo) & ((1 << n) - 1)  # noqa: E731
-    return dict(source=f(0, 2), trigger=f(2, 1), level=ungray(f(3, 3)), fill=ungray(f(6, 2)),
-                throttle=f(8, 1), confirm=f(9, 1), fallback=f(10, 1), insert=f(11, 1))
+    return dict(source=source_of(f(0, 3)), trigger=f(3, 1), level=ungray(f(4, 3)), fill=ungray(f(7, 2)),
+                throttle=f(9, 1), confirm=f(10, 1), fallback=f(11, 1), insert=f(12, 1))
 
 
 def pack(d):
-    return (d["source"] | (d["trigger"] << 2) | (gray(d["level"]) << 3) | (gray(d["fill"]) << 6)
-            | (d["throttle"] << 8) | (d["confirm"] << 9) | (d["fallback"] << 10) | (d["insert"] << 11))
+    """Field values -> the canonical id (one-hot source bits)."""
+    src = (0, 1, 2, 4)[d["source"]]
+    return (src | (d["trigger"] << 3) | (gray(d["level"]) << 4) | (gray(d["fill"]) << 7)
+            | (d["throttle"] << 9) | (d["confirm"] << 10) | (d["fallback"] << 11) | (d["insert"] << 12))
 
 
 def canonical(cid):
-    """Zero every field that cannot change the simulation, so equal configs share an id."""
+    """One id per group of configs that simulate identically."""
     d = fields(int(cid))
     if d["source"] == 0:  # prefetching off: nothing else matters
         return 0
@@ -162,8 +175,21 @@ class Simulator:
         self.binary, self.trace, self.warmup, self.sim = binary, trace, warmup, sim
         self.cache_path = Path(cache_path)
         self.cache = {}
+        # What the cached cycles depend on. A cache is reused only if all of it matches:
+        # config ids only mean something within one encoding, and cycles change with the
+        # trace (re-made traces keep their name), the simulator and the instruction counts.
+        tp, bp = Path(trace), Path(binary)
+        self.identity = {"encoding": ENCODING, "trace": str(tp.resolve()),
+                         "trace_bytes": tp.stat().st_size, "trace_mtime": int(tp.stat().st_mtime),
+                         "binary": str(bp.resolve()), "binary_mtime": int(bp.stat().st_mtime),
+                         "warmup": warmup, "sim": sim}
         if self.cache_path.exists():
-            self.cache = json.loads(self.cache_path.read_text()).get("cache", {})
+            old = json.loads(self.cache_path.read_text())
+            if old.get("identity") == self.identity:
+                self.cache = old.get("cache", {})
+            elif old.get("cache"):
+                print(f"{self.cache_path.name}: trace, simulator, encoding or length changed; "
+                      f"not reusing its {len(old['cache'])} cached results", flush=True)
         self.runs = 0
         self.lock = threading.Lock()
         self.inflight = {}  # key -> Event set when that simulation finishes
@@ -250,7 +276,8 @@ def run_kernel(args):
                                "traces": {k: [t for t in v if t is not None] for k, v in results.items()},
                                "cache": dict(sim.cache), "budget": args.budget, "seeds": args.seeds,
                                "warmup": warmup, "sim": simn, "trace_records": records,
-                               "n_bits": N_BITS, "encoding": "v2"})
+                               "identity": sim.identity,
+                               "n_bits": N_BITS, "encoding": ENCODING})
         with save_lock:
             out.write_text(data)
 
@@ -276,14 +303,21 @@ def run_kernel(args):
                 for name, fn, kw in tuner_fns for seed in range(args.seeds)]
         for f in futs:
             f.result()  # re-raise any error
-    # also record which config was best, for reading the result
-    valid = {k: v for k, v in sim.cache.items() if k.isdigit() and v is not None}
-    best_id = int(min(valid, key=valid.get)) if valid else None
-    data = json.loads(out.read_text())
-    best = {"config_id": best_id, "cycles": valid.get(str(best_id)) if valid else None}
+    # also record which config was best, for reading the result. The two reference
+    # runs count too, so "best" is never worse than the module default or prefetch off.
+    valid = {k: v for k, v in sim.cache.items()
+             if (k.isdigit() or k in ("off", "default")) and v is not None}
+    best = {"config_id": None, "cycles": None}
     if valid:
-        best["hint"], best["insert"] = decode(best_id)
-        best["hint"] += ",insert=" + best["insert"]
+        key = min(valid, key=lambda k: (valid[k], not k.isdigit()))  # ties: prefer a searched id
+        best["cycles"] = valid[key]
+        if key == "default":
+            best["hint"], best["insert"] = "(module default hint),insert=mru", "mru"
+        else:
+            best["config_id"] = 0 if key == "off" else int(key)
+            best["hint"], best["insert"] = decode(best["config_id"])
+            best["hint"] += ",insert=" + best["insert"]
+    data = json.loads(out.read_text())
     data["best"] = best
     data["exhaustive"] = bool(args.exhaustive)
     out.write_text(json.dumps(data))
@@ -297,6 +331,8 @@ def summarize(directory):
     rows = []
     for f in files:
         d = json.loads(f.read_text())
+        if not isinstance(d, dict) or "reference" not in d:
+            continue  # not a tuning result (e.g. a timing file in the same folder)
         off, dflt = d["reference"]["prefetch_off"], d["reference"]["default_hint"]
         if off is None or "best" not in d:
             continue

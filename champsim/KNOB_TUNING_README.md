@@ -9,11 +9,19 @@ Everything here is for the **Linux** setup. If you haven't set up Linux yet, do
 - `champsim/knob_carbs.py` lets CARBS, random search and hill climbing tune its knobs.
 - It runs on the small kernels in `flagbench/` and on 10 memory-bound SPEC CPU 2017 traces.
 
-Knobs (v2 space, 12 bits, 2,305 distinct configs): `source` (off / nextline / stride / markov),
+Knobs (v3 space, 13 bits, 2,305 distinct configs): `source` (off / nextline / stride / markov; one bit
+per engine, highest wins, so each engine is one bit flip away),
 `trigger` (tagged / access), `level` (0-7 aggressiveness ladder = distance + degree), `fill` policy
 (always L1D / gated low / gated high / always L2), `throttle`, `confirm` (1-2), `fallback`, and `insert`
 (prefetch fills at MRU or LRU). The ladder and fill fields use Gray code so neighbours differ by one bit.
 Details: [modules/prefetcher/knobbed/README.md](modules/prefetcher/knobbed/README.md).
+
+v3 replaced v2's 2-bit `source` field, where `markov` was both bits set. CARBS learns each bit on
+its own, and setting either bit alone gives next-line or stride, which do nothing on a linked
+list, so CARBS never found Markov: on pfbench `chase`/`jump` its median was 1.00x while the best
+config (Markov) gave 5.1-5.4x. The SPEC results below were measured with v2; `knob_carbs_v2.py`
+decodes them. "best" now also considers the two reference runs (prefetch off and the module
+default), so it is never worse than either.
 
 ## Results
 
@@ -116,7 +124,8 @@ All commands run from the repo root (`ece 752/`). Steps 1-3 are one-time setup.
 
 6. Print the results table for a whole folder:
    `$PY champsim/knob_carbs.py --summarize champsim/results/knob-carbs`
-   (saved results: `champsim/results/knob-carbs/` and `knob-carbs-spec/` are v1; `knob-carbs-spec-v2/` is v2)
+   (saved results: `champsim/results/knob-carbs/` and `knob-carbs-spec/` are v1; `knob-carbs-spec-v2/` is v2;
+   new runs are v3. A results file of another encoding is never reused as a cache.)
 
 ### Reproduce the SPEC results
 
